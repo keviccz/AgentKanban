@@ -1,0 +1,11 @@
+{
+  "checked_at": "2026-09-22T10:06:16.7072518+00:00",
+  "version": "0.3.0",
+  "responding": true,
+  "title": "AgentKanban",
+  "database_exists": true,
+  "webview_under_data_dir": true,
+  "data_dir": "C:\\Users\\AlexZ\\AppData\\Local\\Temp\\agentkanban-v03-20260922\\release-final-1790071575975",
+  "scope": "Final v0.3.0 portable release process/window startup only; not release DOM or installer wizard",
+  "stderr": ""
+}

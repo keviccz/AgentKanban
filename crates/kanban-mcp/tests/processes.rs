@@ -1,4 +1,4 @@
-use kanban_core::{Database, Status};
+use kanban_core::{CaptureTask, Database, ReviewStatus, ReviewTask, Status};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::{
@@ -196,6 +196,96 @@ fn storage_write_errors_reach_the_client_and_server_recovers() {
     assert_eq!(
         client.tool("task_upsert", args(root.path(), "recovery", "todo"))["isError"],
         false
+    );
+    client.close();
+}
+
+#[test]
+fn live_mcp_can_take_over_captured_work_and_rediscover_a_human_rejection() {
+    let root = tempfile::tempdir().unwrap();
+    let data_dir = root.path().join("workflow-data");
+    let db = Database::open(data_dir.join("agentkanban.sqlite3")).unwrap();
+    let capture = db
+        .capture(CaptureTask {
+            project_path: root.path().to_str().unwrap().into(),
+            task_key: "user-stable-uuid".into(),
+            title: "制作本地报告".into(),
+            request: "报告需要中文标题\n保留原始输入数据".into(),
+        })
+        .unwrap();
+    let mut client = Client::launch(&data_dir);
+    let listed = client.tool(
+        "task_list",
+        json!({"project_path":root.path(),"task_key":"user-stable-uuid"}),
+    );
+    let task = &listed["structuredContent"]["items"][0];
+    assert_eq!(task["id"], capture.id);
+    assert_eq!(task["request"], "报告需要中文标题\n保留原始输入数据");
+    assert_eq!(task["agent_updated_at"], Value::Null);
+    let mut update = args(root.path(), "user-stable-uuid", "done");
+    update["expected_updated_at"] = task["updated_at"].clone();
+    update["agent"] = json!("MCP process test");
+    update["deliverables"] = json!([{"label":"报告","uri":"report.html"}]);
+    let done = client.tool("task_upsert", update.clone());
+    assert_eq!(done["isError"], false);
+    let done_stamp = done["structuredContent"]["updated_at"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let rejected = db
+        .review(ReviewTask {
+            id: capture.id,
+            expected_updated_at: done_stamp.clone(),
+            accepted: false,
+            note: "请补坐标单位".into(),
+        })
+        .unwrap();
+    update["expected_updated_at"] = json!(done_stamp);
+    let stale = client.tool("task_upsert", update.clone());
+    assert_eq!(stale["isError"], true);
+    assert!(stale["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Conflict"));
+    let listed = client.tool("task_list", json!({"task_key":"user-stable-uuid"}));
+    let task = &listed["structuredContent"]["items"][0];
+    assert_eq!(task["id"], capture.id);
+    assert_eq!(task["status"], "todo");
+    assert_eq!(task["review_status"], "changes_requested");
+    assert_eq!(task["user_note"], "请补坐标单位");
+    assert_eq!(task["updated_at"], rejected.updated_at);
+    update["expected_updated_at"] = task["updated_at"].clone();
+    update["progress"] = json!("已补充坐标单位，重新提交");
+    let redelivered = client.tool("task_upsert", update);
+    assert_eq!(redelivered["isError"], false);
+    db.review(ReviewTask {
+        id: capture.id,
+        expected_updated_at: redelivered["structuredContent"]["updated_at"]
+            .as_str()
+            .unwrap()
+            .into(),
+        accepted: true,
+        note: String::new(),
+    })
+    .unwrap();
+    let final_task = db
+        .board()
+        .unwrap()
+        .projects
+        .pop()
+        .unwrap()
+        .tasks
+        .pop()
+        .unwrap();
+    assert_eq!(final_task.review_status, ReviewStatus::Accepted);
+    assert_eq!(final_task.id, capture.id);
+    assert_eq!(
+        final_task.agent_updated_at.as_deref(),
+        redelivered["structuredContent"]["updated_at"].as_str()
+    );
+    assert_eq!(
+        client.tool("task_list", json!({}))["structuredContent"]["items"],
+        json!([])
     );
     client.close();
 }

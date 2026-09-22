@@ -2,8 +2,9 @@
 
 mod integration;
 mod preferences;
+mod task_actions;
 
-use kanban_core::{BoardSnapshot, Database};
+use kanban_core::{BoardSnapshot, CaptureTask, Database, FeedbackTask, ReviewTask, TaskReceipt};
 use preferences::Preferences;
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -16,9 +17,12 @@ use tauri::{
     Emitter, Manager, State, WebviewWindow,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
+use tauri_plugin_opener::OpenerExt;
 
 const SHORTCUT: &str = "Ctrl+Alt+K";
+const CREATE_SHORTCUT: &str = "Ctrl+Alt+N";
+const SHORTCUTS: [&str; 2] = [SHORTCUT, CREATE_SHORTCUT];
 
 #[derive(Default)]
 struct DesktopErrors {
@@ -31,6 +35,7 @@ struct DesktopSettings {
     autostart_enabled: bool,
     shortcut_enabled: bool,
     shortcut: &'static str,
+    create_shortcut: &'static str,
     autostart_error: Option<String>,
     shortcut_error: Option<String>,
 }
@@ -109,6 +114,24 @@ fn toggle_window(app: &tauri::AppHandle) {
     }
 }
 
+fn show_quick_create(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let result = (|| -> Result<(), String> {
+        let preferences = set_compact(window.clone(), app.state(), false)?;
+        window.unminimize().map_err(error)?;
+        window.show().map_err(error)?;
+        window.set_focus().map_err(error)?;
+        window.emit("visibility-changed", true).map_err(error)?;
+        // The frontend uses this canonical state before displaying its capture form.
+        window.emit("quick-create", preferences).map_err(error)
+    })();
+    if let Err(err) = result {
+        let _ = app.emit("app-error", format!("打开新建任务失败：{err}"));
+    }
+}
+
 #[tauri::command]
 fn get_snapshot(state: State<AppState>) -> Result<BoardSnapshot, String> {
     state.db.board().map_err(error)
@@ -117,6 +140,44 @@ fn get_snapshot(state: State<AppState>) -> Result<BoardSnapshot, String> {
 #[tauri::command]
 fn get_revision(state: State<AppState>) -> Result<i64, String> {
     state.db.revision().map_err(error)
+}
+
+#[tauri::command(async)]
+fn create_task(state: State<AppState>, input: CaptureTask) -> Result<TaskReceipt, String> {
+    state.db.capture(input).map_err(error)
+}
+
+#[tauri::command(async)]
+fn review_task(state: State<AppState>, input: ReviewTask) -> Result<TaskReceipt, String> {
+    state.db.review(input).map_err(error)
+}
+
+#[tauri::command(async)]
+fn send_task_feedback(state: State<AppState>, input: FeedbackTask) -> Result<TaskReceipt, String> {
+    state.db.feedback(input).map_err(error)
+}
+
+#[tauri::command(async)]
+fn get_handoff(state: State<AppState>, id: i64) -> Result<String, String> {
+    if id <= 0 {
+        return Err("任务标识无效".into());
+    }
+    let board = state.db.board().map_err(error)?;
+    for project in board.projects {
+        if let Some(task) = project.tasks.iter().find(|task| task.id == id) {
+            return task_actions::handoff(&project.path, task);
+        }
+    }
+    Err("任务不存在或已归档，请刷新看板后重试".into())
+}
+
+#[tauri::command]
+fn open_external_link(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let url = task_actions::external_url(&url)?;
+    // Only this explicit frontend action can open a URL. No file or shell fallback.
+    app.opener()
+        .open_url(url.as_str(), None::<&str>)
+        .map_err(|err| format!("打开网页失败：{err}"))
 }
 
 #[tauri::command]
@@ -221,6 +282,48 @@ fn hide_window(window: WebviewWindow, state: State<AppState>) -> Result<(), Stri
     window.hide().map_err(error)
 }
 
+fn shortcut_states(app: &tauri::AppHandle) -> [bool; 2] {
+    SHORTCUTS.map(|shortcut| app.global_shortcut().is_registered(shortcut))
+}
+
+fn restore_shortcut_states(app: &tauri::AppHandle, desired: [bool; 2]) -> Result<(), String> {
+    let manager = app.global_shortcut();
+    let mut errors = Vec::new();
+    for (shortcut, enabled) in SHORTCUTS.into_iter().zip(desired) {
+        if manager.is_registered(shortcut) == enabled {
+            continue;
+        }
+        let changed = if enabled {
+            manager.register(shortcut)
+        } else {
+            manager.unregister(shortcut)
+        };
+        if let Err(err) = changed {
+            errors.push(format!(
+                "无法{}快捷键 {shortcut}：{err}",
+                if enabled { "注册" } else { "停用" }
+            ));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("；"))
+    }
+}
+
+// Keep the two shortcuts as one setting, including a failed second registration.
+fn change_shortcuts(app: &tauri::AppHandle, enabled: bool) -> Result<[bool; 2], String> {
+    let previous = shortcut_states(app);
+    if let Err(err) = restore_shortcut_states(app, [enabled; 2]) {
+        return Err(match restore_shortcut_states(app, previous) {
+            Ok(()) => format!("{err}；已恢复原快捷键状态"),
+            Err(rollback_err) => format!("{err}；恢复原状态也失败：{rollback_err}"),
+        });
+    }
+    Ok(previous)
+}
+
 fn desktop_settings(app: &tauri::AppHandle, state: &AppState) -> Result<DesktopSettings, String> {
     let enabled = app.autolaunch().is_enabled();
     let mut errors = state.desktop_errors.lock().map_err(error)?;
@@ -236,8 +339,9 @@ fn desktop_settings(app: &tauri::AppHandle, state: &AppState) -> Result<DesktopS
     };
     Ok(DesktopSettings {
         autostart_enabled,
-        shortcut_enabled: app.global_shortcut().is_registered(SHORTCUT),
+        shortcut_enabled: shortcut_states(app).iter().all(|registered| *registered),
         shortcut: SHORTCUT,
+        create_shortcut: CREATE_SHORTCUT,
         autostart_error: errors.autostart.clone(),
         shortcut_error: errors.shortcut.clone(),
     })
@@ -296,38 +400,20 @@ fn set_shortcut_enabled(
 ) -> Result<DesktopSettings, String> {
     let _writer = state.preferences_save.lock().map_err(error)?;
     let previous = state.preferences.lock().map_err(error)?.clone();
-    let previous_registered = app.global_shortcut().is_registered(SHORTCUT);
     let next = Preferences {
         shortcut_enabled: enabled,
         ..previous
     };
     let encoded = serde_json::to_string(&next).map_err(error)?;
-    if enabled != previous_registered {
-        let changed = if enabled {
-            app.global_shortcut().register(SHORTCUT)
-        } else {
-            app.global_shortcut().unregister(SHORTCUT)
-        };
-        if let Err(err) = changed {
-            let message = format!(
-                "无法{}快捷键 {SHORTCUT}：{err}",
-                if enabled { "注册" } else { "停用" }
-            );
+    let previous_registered = match change_shortcuts(&app, enabled) {
+        Ok(previous) => previous,
+        Err(message) => {
             state.desktop_errors.lock().map_err(error)?.shortcut = Some(message.clone());
             return Err(message);
         }
-    }
+    };
     if let Err(err) = state.db.set_setting("ui", &encoded) {
-        let rollback = if enabled != previous_registered {
-            if previous_registered {
-                app.global_shortcut().register(SHORTCUT)
-            } else {
-                app.global_shortcut().unregister(SHORTCUT)
-            }
-        } else {
-            Ok(())
-        };
-        let message = match rollback {
+        let message = match restore_shortcut_states(&app, previous_registered) {
             Ok(()) => format!("快捷键设置保存失败，已恢复原状态：{err}"),
             Err(rollback_err) => {
                 format!("快捷键设置保存失败：{err}；恢复原状态也失败：{rollback_err}")
@@ -384,10 +470,20 @@ fn run() -> tauri::Result<()> {
                 .build(),
         )
         .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
+        .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _, event| {
+                .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        toggle_window(app);
+                        if shortcut.matches(Modifiers::CONTROL | Modifiers::ALT, Code::KeyN) {
+                            show_quick_create(app);
+                        } else if shortcut.matches(Modifiers::CONTROL | Modifiers::ALT, Code::KeyK)
+                        {
+                            toggle_window(app);
+                        }
                     }
                 })
                 .build(),
@@ -452,8 +548,8 @@ fn run() -> tauri::Result<()> {
             // Merely installing the autostart plugin preserves the OS setting.
             // A conflicting hotkey is visible in Settings but must never prevent startup.
             if shortcut_enabled {
-                if let Err(err) = app.global_shortcut().register(SHORTCUT) {
-                    let message = format!("无法注册快捷键 {SHORTCUT}，可能已被其他应用占用：{err}");
+                if let Err(err) = change_shortcuts(app.handle(), true) {
+                    let message = format!("全局快捷键启用失败，可能已被其他应用占用：{err}");
                     eprintln!("{message}");
                     app.state::<AppState>()
                         .desktop_errors
@@ -464,9 +560,10 @@ fn run() -> tauri::Result<()> {
             }
 
             let show = MenuItem::with_id(app, "show", "显示看板", true, None::<&str>)?;
+            let create = MenuItem::with_id(app, "new_task", "新建任务", true, None::<&str>)?;
             let hide = MenuItem::with_id(app, "hide", "隐藏看板", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出 AgentKanban", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &create, &hide, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().ok_or("missing app icon")?.clone())
                 .tooltip("AgentKanban · 由 Agent 更新")
@@ -474,6 +571,7 @@ fn run() -> tauri::Result<()> {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_window(app),
+                    "new_task" => show_quick_create(app),
                     "hide" => {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = hide_window(w, app.state());
@@ -551,6 +649,11 @@ fn run() -> tauri::Result<()> {
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             get_revision,
+            create_task,
+            review_task,
+            send_task_feedback,
+            get_handoff,
+            open_external_link,
             get_preferences,
             set_preferences,
             set_compact,

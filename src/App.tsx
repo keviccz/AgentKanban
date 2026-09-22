@@ -1,8 +1,11 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { compactWindow, hideWindow, native, onError, onVisibility, readPreferences, readRevision, readSnapshot, savePreferences } from './bridge';
-import { defaults, labels, type Filter, type Preferences, type Project, type Snapshot, type Task } from './types';
-import { isStale, relativeTime } from './display';
-import { Settings, TaskDetails } from './Panels';
+import { compactWindow, hideWindow, native, onError, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, savePreferences } from './bridge';
+import { defaults, labels, type CaptureInput, type Filter, type Preferences, type Project, type Snapshot, type Task, type TaskReceipt } from './types';
+import { awaitsReview, inActiveList, isStale, matchesFilter, relativeTime, reviewLabels } from './display';
+import { Settings } from './Panels';
+import { CapturePanel, TaskDetails, type FeedbackDraft } from './Workflows';
+
+const filterLabels: Record<Filter, string> = { all: '全部', review: '待验收', in_progress: '进行中', blocked: '受阻', todo: '待办' };
 
 type IconName = 'logo' | 'pin' | 'sun' | 'moon' | 'minus' | 'close' | 'chevron' | 'branch' | 'expand';
 function Icon({ name, className = '' }: { name: IconName; className?: string }) {
@@ -20,18 +23,20 @@ function Icon({ name, className = '' }: { name: IconName; className?: string }) 
 }
 
 const TaskRow = memo(function TaskRow({ task, now, staleHours, onOpen }: { task: Task; now: number; staleHours: number; onOpen: (id: number) => void }) {
-  return <li className={`task task-${task.status}`}>
+  const timestamp = task.agent_updated_at ?? task.updated_at;
+  return <li className={`task task-${task.status} ${awaitsReview(task) ? 'task-review' : ''}`}>
     <button className="task-open" aria-label={`查看任务：${task.title}`} onClick={() => onOpen(task.id)}>
       <span className="task-heading"><span className="task-title" title={task.title}>{task.title}</span><span className={`status ${task.status}`}><span className="status-dot" />{labels[task.status]}</span></span>
       <span className="progress" title={task.progress}>{task.progress || '尚未补充进展'}</span>
-      <span className="task-meta">{task.branch ? <span className="branch" title={task.branch}><Icon name="branch" /><span>{task.branch}</span></span> : <span />}<span className="update-time">{isStale(task, staleHours, now) && <span className="stale" title="已超过设置的时间未收到更新；任务状态保持不变。">较久未更新</span>}<time dateTime={task.updated_at} title={`Agent 最后上报：${new Date(task.updated_at).toLocaleString('zh-CN')}`}>{relativeTime(task.updated_at, now)}</time></span></span>
+      {(task.agent || task.review_status !== 'none' || task.needs_input) && <span className="task-signals">{task.review_status !== 'none' && <span className={`review-badge ${task.review_status}`}>{reviewLabels[task.review_status]}</span>}{task.needs_input && <span className="input-signal">需要你补充</span>}{task.agent && <span className="agent-name" title={`最后上报：${task.agent}`}>{task.agent}</span>}</span>}
+      <span className="task-meta">{task.branch ? <span className="branch" title={task.branch}><Icon name="branch" /><span>{task.branch}</span></span> : <span>{!task.agent_updated_at ? '等待 Agent 接手' : ''}</span>}<span className="update-time">{isStale(task, staleHours, now) && <span className="stale" title="已超过设置的时间未收到更新；任务状态保持不变。">较久未更新</span>}<time dateTime={timestamp} title={`${task.agent_updated_at ? 'Agent 最后上报' : '记录时间'}：${new Date(timestamp).toLocaleString('zh-CN')}`}>{relativeTime(timestamp, now)}</time></span></span>
     </button>
   </li>;
 });
 
 function ProjectSection({ project, preferences, update, now, busy, onOpen }: { project: Project; preferences: Preferences; update: (p: Partial<Preferences>) => void; now: number; busy: boolean; onOpen: (id: number) => void }) {
-  const active = project.tasks.filter(task => task.status !== 'done' && (preferences.filter === 'all' || task.status === preferences.filter));
-  const done = project.tasks.filter(task => task.status === 'done');
+  const active = project.tasks.filter(task => inActiveList(task) && matchesFilter(task, preferences.filter));
+  const done = project.tasks.filter(task => task.status === 'done' && !awaitsReview(task));
   const collapsed = preferences.collapsed_projects.includes(project.id);
   const expanded = preferences.expanded_projects.includes(project.id);
   const completed = preferences.completed_projects.includes(project.id);
@@ -59,45 +64,103 @@ export function App() {
   const [now, setNow] = useState(Date.now());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [captureDraft, setCaptureDraft] = useState<CaptureInput | null>(null);
+  const [feedbackDrafts, setFeedbackDrafts] = useState<Record<number, FeedbackDraft>>({});
   const revision = useRef(-1);
   const refreshBusy = useRef(false);
   const preferencesLoaded = useRef(false);
+  const preferencesGeneration = useRef(0);
+  const taskActionBusy = useRef(false);
   const busy = saving || !preferencesReady;
   const preferencesRef = useRef(preferences);
   preferencesRef.current = preferences;
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+
+  const applyPreferences = useCallback((next: Preferences) => {
+    preferencesGeneration.current += 1;
+    preferencesRef.current = next; setPreferences(next);
+    preferencesLoaded.current = true; setPreferencesReady(true);
+  }, []);
+
+  const reloadPreferences = useCallback(async () => {
+    const generation = preferencesGeneration.current;
+    const next = await readPreferences();
+    if (generation === preferencesGeneration.current) applyPreferences(next);
+  }, [applyPreferences]);
+
+  const applySnapshot = useCallback((next: Snapshot) => {
+    // A polling response may finish after a user write and its immediate refresh.
+    if (next.revision >= revision.current) { revision.current = next.revision; setSnapshot(next); }
+  }, []);
+
+  const openCapture = useCallback(() => {
+    if (taskActionBusy.current) return;
+    const prefs = preferencesRef.current;
+    const projects = snapshotRef.current.projects;
+    const focused = projects.find(project => project.id === prefs.focused_project);
+    setCaptureDraft(draft => draft ?? { project_path: focused?.path ?? (projects.length === 1 ? projects[0].path : ''), task_key: `capture:${crypto.randomUUID()}`, title: '', request: '' });
+    setSelectedTaskId(null); setSettingsOpen(false); setCaptureOpen(true);
+  }, []);
 
   const refresh = useCallback(async (force = false) => {
     if (refreshBusy.current) return;
     refreshBusy.current = true;
     try {
       if (!preferencesLoaded.current) {
-        const prefs = await readPreferences();
-        setPreferences(prefs); preferencesLoaded.current = true; setPreferencesReady(true);
+        await reloadPreferences();
       }
       const nextRevision = force ? -1 : await readRevision();
       if (force || nextRevision !== revision.current) {
         const next = await readSnapshot();
-        revision.current = next.revision;
-        setSnapshot(next);
+        applySnapshot(next);
       }
-      setError(previous => previous.startsWith('读取失败') || previous.startsWith('启动失败') ? '' : previous);
+      setError(previous => previous.startsWith('读取失败') || previous.startsWith('启动失败') || previous.startsWith('任务已保存，读取失败') ? '' : previous);
     } catch (e) { setError(`读取失败：${String(e)}`); }
     finally { refreshBusy.current = false; }
-  }, []);
+  }, [applySnapshot, reloadPreferences]);
+
+  const refreshAfterWrite = useCallback(async () => {
+    try { applySnapshot(await readSnapshot()); setError(''); }
+    catch (e) { setError(`读取失败：${String(e)}`); }
+  }, [applySnapshot]);
+
+  async function onCreated(receipt: TaskReceipt) {
+    try {
+      const next = await readSnapshot(); applySnapshot(next);
+      setSelectedTaskId(receipt.id); setError('');
+    } catch (e) { setError(`任务已保存，读取失败：${String(e)}`); }
+    finally { setCaptureOpen(false); setCaptureDraft(null); }
+  }
 
   useEffect(() => {
     let disposed = false;
-    const subscriptions = [onVisibility(value => { setVisible(value); if (value) { setNow(Date.now()); void refresh(true); } }), onError(setError)];
+    const generation = preferencesGeneration.current;
+    const subscriptions = [onVisibility(value => { setVisible(value); if (value) { setNow(Date.now()); void refresh(true); } }), onError(setError), onQuickCreate(prefs => {
+      applyPreferences(prefs);
+      openCapture();
+    })];
     void Promise.allSettled([readPreferences(), readSnapshot()]).then(([prefs, board]) => {
       if (disposed) return;
-      if (prefs.status === 'fulfilled') { setPreferences(prefs.value); preferencesLoaded.current = true; setPreferencesReady(true); }
-      if (board.status === 'fulfilled') { setSnapshot(board.value); revision.current = board.value.revision; }
+      if (prefs.status === 'fulfilled' && generation === preferencesGeneration.current) applyPreferences(prefs.value);
+      if (board.status === 'fulfilled') applySnapshot(board.value);
       const failures = [prefs, board].filter(result => result.status === 'rejected').map(result => String(result.reason));
       if (failures.length) setError(`启动失败：${failures.join('；')}`);
       setReady(true);
     });
     return () => { disposed = true; subscriptions.forEach(p => void p.then(unlisten => unlisten())); };
-  }, [refresh]);
+  }, [refresh, applySnapshot, applyPreferences, openCapture]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'n' && !preferencesRef.current.compact) {
+        event.preventDefault(); openCapture();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openCapture]);
 
   useEffect(() => {
     if (!ready || !visible) return;
@@ -110,7 +173,8 @@ export function App() {
   async function update(patch: Partial<Preferences>) {
     if (busy) return;
     setBusy(true);
-    try { const next = await savePreferences({ ...preferencesRef.current, ...patch }); setPreferences(next); setError(''); }
+    const generation = preferencesGeneration.current;
+    try { const next = await savePreferences({ ...preferencesRef.current, ...patch }); if (generation === preferencesGeneration.current) applyPreferences(next); else await reloadPreferences(); setError(''); }
     catch (e) { setError(`设置保存失败：${String(e)}`); }
     finally { setBusy(false); }
   }
@@ -118,7 +182,8 @@ export function App() {
   async function toggleCompact() {
     if (busy) return;
     setBusy(true);
-    try { setPreferences(native ? await compactWindow(!preferences.compact) : { ...preferences, compact: !preferences.compact }); }
+    const generation = preferencesGeneration.current;
+    try { const next = native ? await compactWindow(!preferences.compact) : { ...preferences, compact: !preferences.compact }; if (generation === preferencesGeneration.current) applyPreferences(next); else await reloadPreferences(); }
     catch (e) { setError(`窗口切换失败：${String(e)}`); }
     finally { setBusy(false); }
   }
@@ -129,7 +194,8 @@ export function App() {
   const allTasks = projectsInScope.flatMap(project => project.tasks);
   const ongoing = allTasks.filter(task => task.status === 'in_progress').length;
   const blocked = allTasks.filter(task => task.status === 'blocked').length;
-  const visibleProjects = projectsInScope.filter(project => preferences.filter === 'all' || project.tasks.some(task => task.status === preferences.filter))
+  const pendingReview = allTasks.filter(awaitsReview).length;
+  const visibleProjects = projectsInScope.filter(project => project.tasks.some(task => matchesFilter(task, preferences.filter)))
     .sort((a, b) => Number(preferences.pinned_projects.includes(b.id)) - Number(preferences.pinned_projects.includes(a.id)));
   const selectedProject = snapshot.projects.find(project => project.tasks.some(task => task.id === selectedTaskId));
   const selectedTask = selectedProject?.tasks.find(task => task.id === selectedTaskId);
@@ -149,17 +215,18 @@ export function App() {
       <div className="window-actions">{controls}</div>
     </header>
     {!preferences.compact && <>
-      <div className="summary" title="数量表示 Agent 最后上报的状态；意外退出不会自动完成任务。"><span className="in_progress">{ongoing} 进行中</span><span className="summary-separator">·</span><span className="blocked">{blocked} 受阻</span></div>
+      <div className="summary" title="数量表示 Agent 最后上报的状态；意外退出不会自动完成任务。"><span className="in_progress">{ongoing} 进行中</span><span className="summary-separator">·</span><span className="blocked">{blocked} 受阻</span>{pendingReview > 0 && <button className="review-summary" disabled={busy} onClick={() => void update({ filter: 'review' })}>{pendingReview} 待验收</button>}</div>
       {(snapshot.projects.length > 0 || focusActive) && <div className="project-focus"><select aria-label="聚焦项目" value={preferences.focused_project ?? ''} disabled={busy} onChange={event => void update({ focused_project: event.target.value ? Number(event.target.value) : null })}><option value="">全部项目 · {snapshot.projects.length}</option>{focusActive && !focusedProject && <option value={preferences.focused_project!}>聚焦的项目暂无任务</option>}{snapshot.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select>{focusActive && <button className="text-button" disabled={busy} onClick={() => void update({ focused_project: null })}>查看全部</button>}</div>}
-      <nav className="filters" aria-label="按状态筛选">{(['all', 'in_progress', 'blocked', 'todo'] as Filter[]).map(filter => <button key={filter} disabled={busy} aria-pressed={preferences.filter === filter} className={preferences.filter === filter ? 'selected' : ''} onClick={() => void update({ filter })}>{filter === 'all' ? '全部' : labels[filter]}</button>)}</nav>
+      <nav className="filters" aria-label="按状态筛选">{(['all', 'in_progress', 'blocked', 'todo', 'review'] as Filter[]).map(filter => <button key={filter} disabled={busy} aria-pressed={preferences.filter === filter} className={preferences.filter === filter ? 'selected' : ''} onClick={() => void update({ filter })}>{filterLabels[filter]}</button>)}</nav>
       {error && <div className="error" role="alert"><span title={error}>{error}</span><button onClick={() => void refresh(true)}>重试</button></div>}
       <div className="board" aria-label="项目任务" aria-busy={!ready}>
-        {!ready ? <div className="empty"><p>正在读取看板…</p></div> : visibleProjects.length ? visibleProjects.map(project => <ProjectSection key={project.id} project={project} preferences={preferences} update={p => void update(p)} now={now} busy={busy} onOpen={setSelectedTaskId} />) : <div className="empty"><Icon name="logo" /><h2>{snapshot.projects.length ? `没有${preferences.filter === 'all' ? '' : labels[preferences.filter]}任务` : '把正在推进的事，交给看板。'}</h2><p>{snapshot.projects.length ? '切换项目或状态筛选，查看其他任务。' : '告诉 Agent：「把这个功能加入看板，后续同步进展。」'}</p>{!native && <p className="preview-note">浏览器布局预览 · 请启动桌面版连接本地看板</p>}</div>}
+        {!ready ? <div className="empty"><p>正在读取看板…</p></div> : visibleProjects.length ? visibleProjects.map(project => <ProjectSection key={project.id} project={project} preferences={preferences} update={p => void update(p)} now={now} busy={busy} onOpen={setSelectedTaskId} />) : <div className="empty"><Icon name="logo" /><h2>{snapshot.projects.length ? `没有${preferences.filter === 'all' ? '' : filterLabels[preferences.filter]}任务` : '把正在推进的事，交给看板。'}</h2><p>{snapshot.projects.length ? '切换项目或状态筛选，查看其他任务。' : '记下需求，交给 Agent 推进，再回来检查成果。'}</p><button className="outline-button empty-create" disabled={!native} onClick={openCapture}>新建任务</button>{!native && <p className="preview-note">浏览器布局预览 · 请启动桌面版连接本地看板</p>}</div>}
       </div>
-      <footer><button className="footer-settings" onClick={() => setSettingsOpen(true)}>设置与接入</button><span title={error || '任务状态取自 Agent 最后一次上报。'}>{error ? '同步异常' : native ? '由 Agent 更新 · 本地保存' : '布局预览'}</span></footer>
+      <footer><button className="footer-create" disabled={!native} title="新建任务（Ctrl+Alt+N；窗口内 Ctrl+N）" onClick={openCapture}>＋ 新建</button><span title={error || '任务状态取自 Agent 最后一次上报。'}>{error ? '同步异常' : native ? '本地保存' : '布局预览'}</span><button className="footer-settings" onClick={() => setSettingsOpen(true)}>设置与接入</button></footer>
     </>}
     {preferences.compact && error && <span className="compact-error" title={error} role="alert">!</span>}
-    {settingsOpen && <Settings preferences={preferences} busy={busy} saveError={error} update={patch => void update(patch)} onShortcutChanged={() => void readPreferences().then(setPreferences).catch(e => setError(String(e)))} onClose={() => setSettingsOpen(false)} />}
-    {selectedTask && selectedProject && <TaskDetails task={selectedTask} project={selectedProject} preferences={preferences} now={now} onClose={() => setSelectedTaskId(null)} />}
+    {settingsOpen && <Settings preferences={preferences} busy={busy} saveError={error} update={patch => void update(patch)} onShortcutChanged={() => void reloadPreferences().catch(e => setError(String(e)))} onClose={() => setSettingsOpen(false)} />}
+    {captureOpen && captureDraft && <CapturePanel draft={captureDraft} projects={snapshot.projects} onChange={setCaptureDraft} onCreated={onCreated} onClose={() => setCaptureOpen(false)} />}
+    {selectedTask && selectedProject && <TaskDetails key={selectedTask.id} task={selectedTask} project={selectedProject} preferences={preferences} now={now} draft={feedbackDrafts[selectedTask.id]} onDraftChange={draft => setFeedbackDrafts(previous => { const next = { ...previous }; if (draft) next[selectedTask.id] = draft; else delete next[selectedTask.id]; return next; })} onBusyChange={value => { taskActionBusy.current = value; }} onChanged={refreshAfterWrite} onClose={() => setSelectedTaskId(null)} />}
   </main>;
 }

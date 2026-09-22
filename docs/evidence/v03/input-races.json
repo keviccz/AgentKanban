@@ -1,0 +1,42 @@
+{
+  "data": "C:/Users/AlexZ/AppData/Local/Temp/agentkanban-v03-20260922/input-races-1790071376631",
+  "results": [
+    {
+      "name": "delayed create locks inputs/return/Escape and submits exactly once",
+      "status": "PASS"
+    },
+    {
+      "name": "Ctrl+N preserves unsaved feedback and its original CAS version across an MCP update",
+      "status": "PASS"
+    },
+    {
+      "name": "delayed feedback blocks Escape/Ctrl+N/quick-create and saves the acknowledged version",
+      "status": "PASS"
+    },
+    {
+      "name": "delayed human review also blocks panel replacement and records one acceptance",
+      "status": "PASS"
+    },
+    {
+      "name": "old bootstrap preferences cannot overwrite a later expanded quick-create event",
+      "status": "PASS"
+    },
+    {
+      "name": "native WebView identity, meaningful UI and console health",
+      "status": "PASS"
+    }
+  ],
+  "errors": [],
+  "mcpErrors": [],
+  "consoleErrors": [],
+  "routeHits": 2,
+  "screenshots": [
+    "C:/Users/AlexZ/AppData/Local/Temp/agentkanban-v03-20260922/input-races-1790071376631-capture-saving.png",
+    "C:/Users/AlexZ/AppData/Local/Temp/agentkanban-v03-20260922/input-races-1790071376631-feedback-retained-cas.png",
+    "C:/Users/AlexZ/AppData/Local/Temp/agentkanban-v03-20260922/input-races-1790071376631-feedback-saving.png",
+    "C:/Users/AlexZ/AppData/Local/Temp/agentkanban-v03-20260922/input-races-1790071376631-review-saving.png",
+    "C:/Users/AlexZ/AppData/Local/Temp/agentkanban-v03-20260922/input-races-1790071376631-bootstrap-new-preferences-win.png"
+  ],
+  "interception": "Only bridge network responses in this test WebView are instrumented. Native writes and MCP updates remain real and use an isolated temporary database.",
+  "native_input": "NOT_RUN: physical global shortcuts/tray input. Ctrl+N/Escape use WebView DOM keys; quick-create uses the real Tauri event payload."
+}

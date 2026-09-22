@@ -1,6 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { defaults, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot } from './types';
+import { defaults, type CaptureInput, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt } from './types';
 
 export const native = isTauri();
 // Browser mode is only a layout preview. It never creates sample tasks or pretends to save them.
@@ -17,3 +17,9 @@ export const readDesktopSettings = (): Promise<DesktopSettings> => invoke('get_d
 export const setAutostart = (enabled: boolean): Promise<DesktopSettings> => invoke('set_autostart', { enabled });
 export const setShortcut = (enabled: boolean): Promise<DesktopSettings> => invoke('set_shortcut_enabled', { enabled });
 export const checkMcp = (): Promise<McpCheck> => invoke('check_mcp');
+export const createTask = (input: CaptureInput): Promise<TaskReceipt> => invoke('create_task', { input });
+export const reviewTask = (id: number, expected_updated_at: string, accepted: boolean, note: string): Promise<TaskReceipt> => invoke('review_task', { input: { id, expected_updated_at, accepted, note } });
+export const sendFeedback = (id: number, expected_updated_at: string, note: string): Promise<TaskReceipt> => invoke('send_task_feedback', { input: { id, expected_updated_at, note } });
+export const readHandoff = (id: number): Promise<string> => invoke('get_handoff', { id });
+export const openExternalLink = (url: string): Promise<void> => invoke('open_external_link', { url });
+export const onQuickCreate = (callback: (preferences: Preferences) => void) => native ? listen<Preferences>('quick-create', e => callback(e.payload)) : Promise.resolve(() => {});

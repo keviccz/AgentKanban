@@ -227,3 +227,129 @@ fn oversized_input_is_drained_and_next_message_is_readable() {
     assert_eq!(replies[0]["error"]["code"], -32700);
     assert_eq!(replies[1]["result"], json!({}));
 }
+
+#[test]
+fn v03_human_fields_remain_read_only_and_patch_null_semantics_match_schema() {
+    let (root, db) = fixture();
+    let mut server = Server::new(db.clone());
+    server.handle(initialize("2025-11-25"));
+    let args = json!({"project_path":root.path(),"task_key":"human-boundary","title":"用户需求","status":"in_progress","progress":"已接手","agent":"Codex","next_action":"实现交付"});
+    let created = server
+        .handle(request(
+            2,
+            "tools/call",
+            json!({"name":"task_upsert","arguments":args}),
+        ))
+        .unwrap();
+    assert_eq!(created["result"]["isError"], false);
+    for (field, value) in [
+        ("request", json!("overwrite original")),
+        ("user_note", json!("overwrite feedback")),
+        ("review_status", json!("accepted")),
+        ("agent_updated_at", json!("2099-01-01T00:00:00.000Z")),
+    ] {
+        let mut forbidden = args.clone();
+        forbidden[field] = value;
+        let result = server
+            .handle(request(
+                3,
+                "tools/call",
+                json!({"name":"task_upsert","arguments":forbidden}),
+            ))
+            .unwrap();
+        assert_eq!(result["result"]["isError"], true);
+        assert!(result["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("unknown field"));
+    }
+    let mut no_change = args.clone();
+    no_change["agent"] = Value::Null;
+    let result = server
+        .handle(request(
+            4,
+            "tools/call",
+            json!({"name":"task_upsert","arguments":no_change}),
+        ))
+        .unwrap();
+    assert_eq!(
+        result["result"]["structuredContent"],
+        created["result"]["structuredContent"]
+    );
+    assert_eq!(db.revision().unwrap(), 1);
+    for field in [
+        "next_action",
+        "needs_input",
+        "deliverables",
+        "expected_updated_at",
+    ] {
+        let mut invalid = args.clone();
+        invalid[field] = Value::Null;
+        assert_eq!(
+            server
+                .handle(request(
+                    5,
+                    "tools/call",
+                    json!({"name":"task_upsert","arguments":invalid})
+                ))
+                .unwrap()["result"]["isError"],
+            true
+        );
+    }
+    let current = db.board().unwrap();
+    assert_eq!(current.projects[0].tasks[0].agent.as_deref(), Some("Codex"));
+    assert_eq!(current.projects[0].tasks[0].next_action, "实现交付");
+    assert_eq!(current.revision, 1);
+}
+
+#[test]
+fn v03_exact_lookup_and_optimistic_conflicts_are_exposed_as_tool_errors() {
+    let (root, db) = fixture();
+    let mut server = Server::new(db.clone());
+    server.handle(initialize("2025-11-25"));
+    let args = json!({"project_path":root.path(),"task_key":"guarded","title":"待验收交付","status":"done","progress":"交付完成","deliverables":[{"label":"报告","uri":"report.html"}]});
+    let created = server
+        .handle(request(
+            2,
+            "tools/call",
+            json!({"name":"task_upsert","arguments":args}),
+        ))
+        .unwrap();
+    let list = server
+        .handle(request(
+            3,
+            "tools/call",
+            json!({"name":"task_list","arguments":{"task_key":"guarded","include_done":true}}),
+        ))
+        .unwrap();
+    let task = &list["result"]["structuredContent"]["items"][0];
+    assert_eq!(task["review_status"], "pending");
+    assert_eq!(task["deliverables"][0]["uri"], "report.html");
+    assert_eq!(
+        task["agent_updated_at"],
+        created["result"]["structuredContent"]["updated_at"]
+    );
+    let mut stale = args.clone();
+    stale["expected_updated_at"] = json!("2000-01-01T00:00:00.000Z");
+    let result = server
+        .handle(request(
+            4,
+            "tools/call",
+            json!({"name":"task_upsert","arguments":stale}),
+        ))
+        .unwrap();
+    assert_eq!(result["result"]["isError"], true);
+    assert!(result["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Conflict"));
+    let archived = server.handle(request(5,"tools/call",json!({"name":"task_archive","arguments":{"project_path":root.path(),"task_key":"guarded","expected_updated_at":"2000-01-01T00:00:00.000Z"}}))).unwrap();
+    assert_eq!(archived["result"]["isError"], true);
+    assert!(archived["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Conflict"));
+    assert_eq!(db.revision().unwrap(), 1);
+    let list = server.handle(request(6,"tools/call",json!({"name":"task_list","arguments":{"task_key":"guarded-prefix","include_done":true}}))).unwrap();
+    assert_eq!(list["result"]["structuredContent"]["items"], json!([]));
+}

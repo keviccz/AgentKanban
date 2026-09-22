@@ -1,9 +1,16 @@
 export type Status = 'todo' | 'in_progress' | 'blocked' | 'done';
-export type Filter = 'all' | Exclude<Status, 'done'>;
+export type Filter = 'all' | 'review' | Exclude<Status, 'done'>;
+export type ReviewStatus = 'none' | 'pending' | 'accepted' | 'changes_requested';
+export interface Deliverable { label: string; uri: string }
 export interface Task {
   id: number; project_id: number; task_key: string; title: string; status: Status;
   progress: string; branch: string | null; updated_at: string; archived: boolean;
+  request: string; agent: string | null; next_action: string; needs_input: string;
+  deliverables: Deliverable[]; review_status: ReviewStatus; user_note: string;
+  agent_updated_at: string | null;
 }
+export interface TaskReceipt { id: number; status: Status; updated_at: string }
+export interface CaptureInput { project_path: string; task_key: string; title: string; request: string }
 export interface Project { id: number; name: string; path: string; tasks: Task[] }
 export interface Snapshot { revision: number; projects: Project[] }
 export interface Preferences {
@@ -23,6 +30,7 @@ export interface IntegrationInfo {
 }
 export interface DesktopSettings {
   autostart_enabled: boolean; shortcut_enabled: boolean; shortcut: string;
+  create_shortcut: string;
   autostart_error: string | null; shortcut_error: string | null;
 }
 export interface McpCheck { ok: boolean; message: string }

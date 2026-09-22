@@ -1,0 +1,48 @@
+{
+  "data": "C:/Users/AlexZ/AppData/Local/Temp/agentkanban-v03-20260922/ui-1790070654482",
+  "results": [
+    {
+      "name": "native board exposes pending review, agent attribution and requested input",
+      "status": "PASS"
+    },
+    {
+      "name": "Ctrl+N capture, draft retention, visible directory error, Ctrl+Enter saves one task",
+      "status": "PASS"
+    },
+    {
+      "name": "human feedback preserves Agent timestamp; latest handoff includes requirements and note",
+      "status": "PASS"
+    },
+    {
+      "name": "concurrent Agent update blocks stale review, then rejection returns same record to todo",
+      "status": "PASS"
+    },
+    {
+      "name": "Agent resubmission requests review; human acceptance persists without falsifying Agent report",
+      "status": "PASS"
+    },
+    {
+      "name": "both global shortcuts register together and can be disabled/re-enabled",
+      "status": "PASS"
+    },
+    {
+      "name": "quick-create event carries expanded preferences and opens capture from compact mode",
+      "status": "PASS"
+    },
+    {
+      "name": "dark/light and 320/380/480px native WebView layouts have no horizontal overflow",
+      "status": "PASS"
+    },
+    {
+      "name": "GUI exit does not block MCP; restart restores tasks, review and preferences",
+      "status": "PASS"
+    },
+    {
+      "name": "no native WebView JavaScript errors",
+      "status": "PASS"
+    }
+  ],
+  "errors": [],
+  "mcpErrors": [],
+  "native_input": "NOT_RUN: physical global keys/tray/login not tested; registration, local DOM keys and event payload tested"
+}

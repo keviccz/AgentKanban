@@ -2,7 +2,7 @@
 
 mod project;
 
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -22,6 +22,10 @@ pub enum Error {
     TaskNotFound,
     #[error("Task is archived; restore it with task_archive(archived=false) before updating")]
     TaskArchived,
+    #[error("Conflict: task changed since expected_updated_at; re-read the task before retrying")]
+    Conflict,
+    #[error("Only an unarchived done task with pending review can be reviewed")]
+    NotReviewable,
     #[error("Cannot identify project: {0}")]
     ProjectIdentity(String),
     #[error("Database error: {0}")]
@@ -54,6 +58,34 @@ impl Status {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewStatus {
+    #[default]
+    None,
+    Pending,
+    Accepted,
+    ChangesRequested,
+}
+
+impl ReviewStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Pending => "pending",
+            Self::Accepted => "accepted",
+            Self::ChangesRequested => "changes_requested",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Deliverable {
+    pub label: String,
+    pub uri: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Task {
     pub id: i64,
@@ -65,6 +97,22 @@ pub struct Task {
     pub branch: Option<String>,
     pub updated_at: String,
     pub archived: bool,
+    #[serde(default)]
+    pub request: String,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub next_action: String,
+    #[serde(default)]
+    pub needs_input: String,
+    #[serde(default)]
+    pub deliverables: Vec<Deliverable>,
+    #[serde(default)]
+    pub review_status: ReviewStatus,
+    #[serde(default)]
+    pub user_note: String,
+    #[serde(default)]
+    pub agent_updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,7 +129,9 @@ pub struct BoardSnapshot {
     pub projects: Vec<ProjectBoard>,
 }
 
-/// Full replacement of the visible task fields; omitted/null branch clears it.
+/// Legacy fields are replacements; omitted/null branch clears it.
+/// New Agent fields are patches: omission preserves the value. Null agent is
+/// omission too; an empty agent string clears the attribution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpsertTask {
@@ -92,6 +142,58 @@ pub struct UpsertTask {
     pub progress: String,
     #[serde(default)]
     pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_action: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub needs_input: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deliverables: Option<Vec<Deliverable>>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureTask {
+    pub project_path: String,
+    pub task_key: String,
+    pub title: String,
+    pub request: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewTask {
+    pub id: i64,
+    pub expected_updated_at: String,
+    pub accepted: bool,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FeedbackTask {
+    pub id: i64,
+    pub expected_updated_at: String,
+    pub note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +205,12 @@ pub struct ListTasks {
         skip_serializing_if = "Option::is_none"
     )]
     pub project_path: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub task_key: Option<String>,
     #[serde(
         default,
         deserialize_with = "optional_non_null",
@@ -135,6 +243,7 @@ impl Default for ListTasks {
     fn default() -> Self {
         Self {
             project_path: None,
+            task_key: None,
             status: None,
             include_done: false,
             include_archived: false,
@@ -151,6 +260,12 @@ pub struct ArchiveTask {
     pub task_key: String,
     #[serde(default = "default_archived")]
     pub archived: bool,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_updated_at: Option<String>,
 }
 
 const fn default_archived() -> bool {
@@ -242,7 +357,7 @@ impl Database {
         }
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 1 {
+        if version > 2 {
             return Err(Error::NewerSchema(version));
         }
         if version == 0 {
@@ -270,6 +385,21 @@ impl Database {
                 INSERT INTO metadata(key,value) VALUES ('revision',0);
                 CREATE TABLE settings (key TEXT PRIMARY KEY,value TEXT NOT NULL);
                 PRAGMA user_version=1;",
+            )?;
+        }
+        if version <= 1 {
+            tx.execute_batch(
+                "ALTER TABLE tasks ADD COLUMN request TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE tasks ADD COLUMN agent TEXT;
+                 ALTER TABLE tasks ADD COLUMN next_action TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE tasks ADD COLUMN needs_input TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE tasks ADD COLUMN deliverables TEXT NOT NULL DEFAULT '[]';
+                 ALTER TABLE tasks ADD COLUMN review_status TEXT NOT NULL DEFAULT 'none'
+                   CHECK(review_status IN ('none','pending','accepted','changes_requested'));
+                 ALTER TABLE tasks ADD COLUMN user_note TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE tasks ADD COLUMN agent_updated_at TEXT;
+                 UPDATE tasks SET agent_updated_at=updated_at;
+                 PRAGMA user_version=2;",
             )?;
         }
         tx.commit()?;
@@ -333,8 +463,7 @@ impl Database {
         }
         {
             let mut statement = tx.prepare(
-                "SELECT id,project_id,task_key,title,status,progress,branch,updated_at,archived
-                 FROM tasks WHERE project_id=?1 AND archived=0
+                "SELECT * FROM tasks WHERE project_id=?1 AND archived=0
                  ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'blocked' THEN 1 WHEN 'todo' THEN 2 ELSE 3 END,
                           updated_at DESC,id DESC"
             )?;
@@ -355,6 +484,23 @@ impl Database {
         if let Some(branch) = &input.branch {
             validate_text("branch", branch, 1, 200)?;
         }
+        if let Some(agent) = &input.agent {
+            if !agent.is_empty() {
+                validate_text("agent", agent, 1, 100)?;
+            }
+        }
+        if let Some(action) = &input.next_action {
+            validate_text("next_action", action, 0, 600)?;
+        }
+        if let Some(needed) = &input.needs_input {
+            validate_text("needs_input", needed, 0, 600)?;
+        }
+        if let Some(deliverables) = &input.deliverables {
+            validate_deliverables(deliverables)?;
+        }
+        if let Some(expected) = &input.expected_updated_at {
+            validate_text("expected_updated_at", expected, 1, 64)?;
+        }
         let project = resolve_project(&input.project_path)?;
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -365,10 +511,37 @@ impl Database {
             [&project.identity],
             |row| row.get(0),
         )?;
-        let existing = tx.query_row(
-            "SELECT id,project_id,task_key,title,status,progress,branch,updated_at,archived FROM tasks WHERE project_id=?1 AND task_key=?2",
-            params![project_id, input.task_key], read_task
-        ).optional()?;
+        let existing = tx
+            .query_row(
+                "SELECT * FROM tasks WHERE project_id=?1 AND task_key=?2",
+                params![project_id, input.task_key],
+                read_task,
+            )
+            .optional()?;
+        check_expected(input.expected_updated_at.as_deref(), existing.as_ref())?;
+        let agent = match &input.agent {
+            Some(agent) if agent.is_empty() => None,
+            Some(agent) => Some(agent.clone()),
+            None => existing.as_ref().and_then(|task| task.agent.clone()),
+        };
+        let next_action = input.next_action.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .map(|task| task.next_action.clone())
+                .unwrap_or_default()
+        });
+        let needs_input = input.needs_input.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .map(|task| task.needs_input.clone())
+                .unwrap_or_default()
+        });
+        let deliverables = input.deliverables.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .map(|task| task.deliverables.clone())
+                .unwrap_or_default()
+        });
         if let Some(ref task) = existing {
             if task.archived {
                 return Err(Error::TaskArchived);
@@ -377,21 +550,51 @@ impl Database {
                 && task.status == input.status
                 && task.progress == input.progress
                 && task.branch == input.branch
+                && task.agent == agent
+                && task.next_action == next_action
+                && task.needs_input == needs_input
+                && task.deliverables == deliverables
             {
                 return Ok(TaskReceipt::from(task));
             }
         }
-        let updated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let review_status = if input.status == Status::Done {
+            match &existing {
+                None => ReviewStatus::Pending,
+                Some(task)
+                    if task.status != Status::Done
+                        || task.review_status == ReviewStatus::Accepted =>
+                {
+                    ReviewStatus::Pending
+                }
+                Some(task) => task.review_status,
+            }
+        } else if existing
+            .as_ref()
+            .is_some_and(|task| task.review_status == ReviewStatus::ChangesRequested)
+        {
+            // Keep a rejection visible while the Agent works through the requested changes.
+            ReviewStatus::ChangesRequested
+        } else {
+            ReviewStatus::None
+        };
+        let updated_at = changed_at(existing.as_ref().map(|task| task.updated_at.as_str()));
+        let deliverables = serde_json::to_string(&deliverables)
+            .map_err(|err| Error::InvalidInput(err.to_string()))?;
         let id = if let Some(task) = existing {
             tx.execute(
-                "UPDATE tasks SET title=?1,status=?2,progress=?3,branch=?4,updated_at=?5 WHERE id=?6",
-                params![input.title, input.status.as_str(), input.progress, input.branch, updated_at, task.id]
+                "UPDATE tasks SET title=?1,status=?2,progress=?3,branch=?4,updated_at=?5,
+                    agent=?6,next_action=?7,needs_input=?8,deliverables=?9,review_status=?10,agent_updated_at=?5 WHERE id=?11",
+                params![input.title, input.status.as_str(), input.progress, input.branch, updated_at,
+                    agent,next_action,needs_input,deliverables,review_status.as_str(),task.id]
             )?;
             task.id
         } else {
             tx.execute(
-                "INSERT INTO tasks(project_id,task_key,title,status,progress,branch,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                params![project_id, input.task_key, input.title, input.status.as_str(), input.progress, input.branch, updated_at]
+                "INSERT INTO tasks(project_id,task_key,title,status,progress,branch,updated_at,agent,next_action,needs_input,deliverables,review_status,agent_updated_at)
+                    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?7)",
+                params![project_id, input.task_key, input.title, input.status.as_str(), input.progress, input.branch, updated_at,
+                    agent,next_action,needs_input,deliverables,review_status.as_str()]
             )?;
             tx.last_insert_rowid()
         };
@@ -410,6 +613,9 @@ impl Database {
                 "limit must be between 1 and 100".into(),
             ));
         }
+        if let Some(key) = &input.task_key {
+            validate_text("task_key", key, 1, 160)?;
+        }
         let identity = input
             .project_path
             .as_deref()
@@ -418,15 +624,16 @@ impl Database {
             .map(|project| project.identity);
         let conn = self.connect()?;
         let mut statement = conn.prepare(
-            "SELECT t.id,t.project_id,t.task_key,t.title,t.status,t.progress,t.branch,t.updated_at,t.archived,p.name,p.path
+            "SELECT t.*,p.name AS project_name,p.path AS project_path
              FROM tasks t JOIN projects p ON t.project_id=p.id
              WHERE (?1 IS NULL OR p.identity=?1)
                AND (?2 IS NULL OR t.status=?2)
                AND (?3 OR t.status!='done')
                AND (?4 OR t.archived=0)
+               AND (?5 IS NULL OR t.task_key=?5)
              ORDER BY CASE t.status WHEN 'in_progress' THEN 0 WHEN 'blocked' THEN 1 WHEN 'todo' THEN 2 ELSE 3 END,
                       t.updated_at DESC,t.id DESC
-             LIMIT ?5 OFFSET ?6"
+             LIMIT ?6 OFFSET ?7"
         )?;
         // An explicit done filter must work without also requiring include_done=true.
         let include_done = input.include_done || input.status == Some(Status::Done);
@@ -437,14 +644,15 @@ impl Database {
                     input.status.map(Status::as_str),
                     include_done,
                     input.include_archived,
+                    input.task_key,
                     input.limit + 1,
                     input.offset
                 ],
                 |row| {
                     Ok(ListedTask {
                         task: read_task(row)?,
-                        project_name: row.get(9)?,
-                        project_path: row.get(10)?,
+                        project_name: row.get("project_name")?,
+                        project_path: row.get("project_path")?,
                     })
                 },
             )?
@@ -463,21 +671,154 @@ impl Database {
 
     pub fn archive(&self, input: ArchiveTask) -> Result<TaskReceipt> {
         validate_text("task_key", &input.task_key, 1, 160)?;
+        if let Some(expected) = &input.expected_updated_at {
+            validate_text("expected_updated_at", expected, 1, 64)?;
+        }
         let project = resolve_project(&input.project_path)?;
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let task = tx.query_row(
-            "SELECT t.id,t.project_id,t.task_key,t.title,t.status,t.progress,t.branch,t.updated_at,t.archived
-             FROM tasks t JOIN projects p ON t.project_id=p.id WHERE p.identity=?1 AND t.task_key=?2",
+            "SELECT t.* FROM tasks t JOIN projects p ON t.project_id=p.id WHERE p.identity=?1 AND t.task_key=?2",
             params![project.identity, input.task_key], read_task
         ).optional()?.ok_or(Error::TaskNotFound)?;
+        check_expected(input.expected_updated_at.as_deref(), Some(&task))?;
         if task.archived == input.archived {
             return Ok(TaskReceipt::from(&task));
         }
-        let updated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let updated_at = changed_at(Some(&task.updated_at));
         tx.execute(
-            "UPDATE tasks SET archived=?1,updated_at=?2 WHERE id=?3",
+            "UPDATE tasks SET archived=?1,updated_at=?2,agent_updated_at=?2 WHERE id=?3",
             params![input.archived, updated_at, task.id],
+        )?;
+        tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
+        tx.commit()?;
+        Ok(TaskReceipt {
+            id: task.id,
+            status: task.status,
+            updated_at,
+        })
+    }
+
+    /// GUI capture is create-only. Retrying a key never overwrites work already taken on by an Agent.
+    pub fn capture(&self, input: CaptureTask) -> Result<TaskReceipt> {
+        validate_text("task_key", &input.task_key, 1, 160)?;
+        validate_text("title", &input.title, 1, 200)?;
+        validate_multiline("request", &input.request, 0, 2000)?;
+        let project = resolve_project(&input.project_path)?;
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute("INSERT INTO projects(identity,name,path) VALUES (?1,?2,?3) ON CONFLICT(identity) DO NOTHING",
+            params![project.identity,project.name,project.path])?;
+        let project_id: i64 = tx.query_row(
+            "SELECT id FROM projects WHERE identity=?1",
+            [&project.identity],
+            |row| row.get(0),
+        )?;
+        if let Some(task) = tx
+            .query_row(
+                "SELECT * FROM tasks WHERE project_id=?1 AND task_key=?2",
+                params![project_id, input.task_key],
+                read_task,
+            )
+            .optional()?
+        {
+            return Ok(TaskReceipt::from(&task));
+        }
+        let updated_at = changed_at(None);
+        tx.execute(
+            "INSERT INTO tasks(project_id,task_key,title,status,progress,updated_at,request)
+            VALUES (?1,?2,?3,'todo','等待 Agent 接手',?4,?5)",
+            params![
+                project_id,
+                input.task_key,
+                input.title,
+                updated_at,
+                input.request
+            ],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
+        tx.commit()?;
+        Ok(TaskReceipt {
+            id,
+            status: Status::Todo,
+            updated_at,
+        })
+    }
+
+    /// GUI review records a human decision without reporting new Agent activity.
+    /// Rejection returns the original task to the default unfinished MCP query.
+    pub fn review(&self, input: ReviewTask) -> Result<TaskReceipt> {
+        validate_task_id(input.id)?;
+        validate_text("expected_updated_at", &input.expected_updated_at, 1, 64)?;
+        validate_multiline(
+            "note",
+            &input.note,
+            if input.accepted { 0 } else { 1 },
+            2000,
+        )?;
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = tx
+            .query_row("SELECT * FROM tasks WHERE id=?1", [input.id], read_task)
+            .optional()?
+            .ok_or(Error::TaskNotFound)?;
+        check_expected(Some(&input.expected_updated_at), Some(&task))?;
+        if task.archived
+            || task.status != Status::Done
+            || task.review_status != ReviewStatus::Pending
+        {
+            return Err(Error::NotReviewable);
+        }
+        let (status, review_status) = if input.accepted {
+            (Status::Done, ReviewStatus::Accepted)
+        } else {
+            (Status::Todo, ReviewStatus::ChangesRequested)
+        };
+        let note = if input.accepted && input.note.is_empty() {
+            task.user_note
+        } else {
+            input.note
+        };
+        let updated_at = changed_at(Some(&task.updated_at));
+        tx.execute(
+            "UPDATE tasks SET status=?1,review_status=?2,user_note=?3,updated_at=?4 WHERE id=?5",
+            params![
+                status.as_str(),
+                review_status.as_str(),
+                note,
+                updated_at,
+                task.id
+            ],
+        )?;
+        tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
+        tx.commit()?;
+        Ok(TaskReceipt {
+            id: task.id,
+            status,
+            updated_at,
+        })
+    }
+
+    /// Replace the latest human note; an empty string clears it. All Agent fields stay intact.
+    pub fn feedback(&self, input: FeedbackTask) -> Result<TaskReceipt> {
+        validate_task_id(input.id)?;
+        validate_text("expected_updated_at", &input.expected_updated_at, 1, 64)?;
+        validate_multiline("note", &input.note, 0, 2000)?;
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = tx
+            .query_row("SELECT * FROM tasks WHERE id=?1", [input.id], read_task)
+            .optional()?
+            .ok_or(Error::TaskNotFound)?;
+        check_expected(Some(&input.expected_updated_at), Some(&task))?;
+        if task.user_note == input.note {
+            return Ok(TaskReceipt::from(&task));
+        }
+        let updated_at = changed_at(Some(&task.updated_at));
+        tx.execute(
+            "UPDATE tasks SET user_note=?1,updated_at=?2 WHERE id=?3",
+            params![input.note, updated_at, task.id],
         )?;
         tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
         tx.commit()?;
@@ -526,8 +867,89 @@ fn validate_text(name: &str, value: &str, min: usize, max: usize) -> Result<()> 
     Ok(())
 }
 
+fn validate_multiline(name: &str, value: &str, min: usize, max: usize) -> Result<()> {
+    let length = value.chars().count();
+    if length < min || length > max || (min > 0 && value.trim().is_empty()) {
+        return Err(Error::InvalidInput(format!(
+            "{name} must contain {min} to {max} characters"
+        )));
+    }
+    if value
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return Err(Error::InvalidInput(format!(
+            "{name} contains unsupported control characters"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_task_id(id: i64) -> Result<()> {
+    if id <= 0 {
+        return Err(Error::InvalidInput(
+            "id must be a positive task identifier".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_deliverables(deliverables: &[Deliverable]) -> Result<()> {
+    if deliverables.len() > 5 {
+        return Err(Error::InvalidInput(
+            "deliverables allows at most 5 items".into(),
+        ));
+    }
+    for deliverable in deliverables {
+        validate_text("deliverable label", &deliverable.label, 1, 100)?;
+        validate_text("deliverable uri", &deliverable.uri, 1, 1000)?;
+        let lower = deliverable.uri.to_ascii_lowercase();
+        if let Some(rest) = lower
+            .strip_prefix("https://")
+            .or_else(|| lower.strip_prefix("http://"))
+        {
+            if rest.trim().is_empty() {
+                return Err(Error::InvalidInput(
+                    "deliverable HTTP URL must include a host".into(),
+                ));
+            }
+        } else if let Some(colon) = deliverable.uri.find(':') {
+            let drive_path = colon == 1 && deliverable.uri.as_bytes()[0].is_ascii_alphabetic();
+            if !drive_path {
+                return Err(Error::InvalidInput(
+                    "deliverable uri must be a file path or an http(s) URL".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_expected(expected: Option<&str>, task: Option<&Task>) -> Result<()> {
+    if let Some(expected) = expected {
+        if task.is_none_or(|task| task.updated_at != expected) {
+            return Err(Error::Conflict);
+        }
+    }
+    Ok(())
+}
+
+// A millisecond timestamp is also the optimistic concurrency token. Make it
+// strictly increase per task even for rapid writes or a backwards wall clock.
+fn changed_at(previous: Option<&str>) -> String {
+    let now = Utc::now();
+    let previous = previous.and_then(|text| DateTime::parse_from_rfc3339(text).ok());
+    let millis = previous.map_or(now.timestamp_millis(), |timestamp| {
+        now.timestamp_millis()
+            .max(timestamp.timestamp_millis().saturating_add(1))
+    });
+    DateTime::<Utc>::from_timestamp_millis(millis)
+        .unwrap_or(now)
+        .to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
 fn read_task(row: &Row<'_>) -> rusqlite::Result<Task> {
-    let raw: String = row.get(4)?;
+    let raw: String = row.get("status")?;
     let status = match raw.as_str() {
         "todo" => Status::Todo,
         "in_progress" => Status::InProgress,
@@ -541,15 +963,41 @@ fn read_task(row: &Row<'_>) -> rusqlite::Result<Task> {
             ))
         }
     };
+    let review_raw: String = row.get("review_status")?;
+    let review_status = match review_raw.as_str() {
+        "none" => ReviewStatus::None,
+        "pending" => ReviewStatus::Pending,
+        "accepted" => ReviewStatus::Accepted,
+        "changes_requested" => ReviewStatus::ChangesRequested,
+        _ => {
+            return Err(rusqlite::Error::InvalidColumnType(
+                14,
+                "review_status".into(),
+                rusqlite::types::Type::Text,
+            ))
+        }
+    };
+    let raw_deliverables: String = row.get("deliverables")?;
+    let deliverables = serde_json::from_str(&raw_deliverables).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(err))
+    })?;
     Ok(Task {
-        id: row.get(0)?,
-        project_id: row.get(1)?,
-        task_key: row.get(2)?,
-        title: row.get(3)?,
+        id: row.get("id")?,
+        project_id: row.get("project_id")?,
+        task_key: row.get("task_key")?,
+        title: row.get("title")?,
         status,
-        progress: row.get(5)?,
-        branch: row.get(6)?,
-        updated_at: row.get(7)?,
-        archived: row.get(8)?,
+        progress: row.get("progress")?,
+        branch: row.get("branch")?,
+        updated_at: row.get("updated_at")?,
+        archived: row.get("archived")?,
+        request: row.get("request")?,
+        agent: row.get("agent")?,
+        next_action: row.get("next_action")?,
+        needs_input: row.get("needs_input")?,
+        deliverables,
+        review_status,
+        user_note: row.get("user_note")?,
+        agent_updated_at: row.get("agent_updated_at")?,
     })
 }

@@ -32,6 +32,11 @@ impl Fixture {
             status,
             progress: "已创建，等待开始".into(),
             branch: Some("feature/中文".into()),
+            agent: None,
+            next_action: None,
+            needs_input: None,
+            deliverables: None,
+            expected_updated_at: None,
         }
     }
 
@@ -40,6 +45,7 @@ impl Fixture {
             project_path: self.project.clone(),
             task_key: key.into(),
             archived,
+            expected_updated_at: None,
         }
     }
 }

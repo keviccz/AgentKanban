@@ -37,7 +37,7 @@ impl Default for Preferences {
 impl Preferences {
     pub fn validate(&self) -> Result<(), String> {
         if !["light", "dark"].contains(&self.theme.as_str())
-            || !["all", "in_progress", "blocked", "todo"].contains(&self.filter.as_str())
+            || !["all", "in_progress", "blocked", "todo", "review"].contains(&self.filter.as_str())
             || ![0, 1, 4, 8, 24, 48, 168].contains(&self.stale_after_hours)
             || self.focused_project.is_some_and(|id| id <= 0)
             || self.pinned_projects.iter().any(|id| *id <= 0)
@@ -95,6 +95,21 @@ mod tests {
         .is_err());
         assert!(Preferences {
             pinned_projects: vec![-1],
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn review_filter_is_valid_without_changing_previous_preferences() {
+        let prefs: Preferences = serde_json::from_str(r#"{"filter":"review"}"#).unwrap();
+        prefs.validate().unwrap();
+        assert_eq!(prefs.filter, "review");
+        assert!(prefs.shortcut_enabled);
+        assert_eq!(prefs.stale_after_hours, 24);
+        assert!(Preferences {
+            filter: "accepted".into(),
             ..Default::default()
         }
         .validate()

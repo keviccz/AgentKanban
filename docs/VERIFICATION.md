@@ -1,5 +1,30 @@
 # 验证与验收
 
+## v0.3 实测结果（2026-09-22）
+
+本轮补齐文字新建、`Ctrl+Alt+N`、开工说明、Agent 接手信息、下一步、所需输入、交付物、用户补充与人工验收。四种任务状态不变，新增独立验收状态；语音与自动派发未实现。
+
+| 检查 | 结果与范围 |
+| --- | --- |
+| Rust 自动检查 | PASS：41 项（数据与 MCP 33 项，桌面 8 项）。包含 schema 1→2 迁移与失败回滚、旧数据和设置保留、创建幂等、退回→重做→再交付→验收、无变化不撤销验收、并发版本冲突零写入；Clippy `--all-targets -- -D warnings` 与工作区格式检查通过 |
+| 前端生产构建 | PASS：TypeScript 与 Vite 构建；沿用既有 React/Tauri 架构 |
+| 独立 MCP 进程 | PASS：[debug 18/18](evidence/v03/mcp-debug.json)、[release 18/18](evidence/v03/mcp-release.json)。仅三个工具；新增字段往返、精确查询、省略保留/显式清空、过期更新拒绝、禁止 MCP 写人工字段均通过 |
+| 真实桌面 WebView | PASS：[10 项](evidence/v03/ui.json)。文字新建、错误提示、草稿保留、系统剪贴板实际内容、Agent 归属与所需输入、人工反馈不刷新 Agent 时间、成果展示与非 HTTP(S) 拒绝、并发验收保护、退回原记录、再次交付与验收、GUI 退出后 MCP 写入及重启恢复。含页面错误检查 |
+| 输入与异步竞态 | PASS：[6 项](evidence/v03/input-races.json)。创建期间锁定编辑与关闭；未提交反馈在快捷新建后保留，且保留原版本校验；反馈/验收保存期间防止面板被快捷键替换；延迟返回的旧设置不会覆盖快速新建事件中的展开状态；含控制台健康检查 |
+| 快捷键与布局 | PASS（已列范围）：两个全局快捷键的实际注册/停用、窗口内 `Ctrl+N`、`Ctrl+Enter`、Escape，以及 `quick-create` 原生事件载荷；浅色/深色、长中文、320×360/380×520/480×640 WebView 视口无横向溢出。系统实际缩放 150%，其余为 CDP 模拟 |
+| 真实 Codex 文字审阅任务 | PASS：[两会话结果](evidence/v03/agent-review-results.json)、[第一会话工具记录](evidence/v03/codex-v03-review-first.jsonl)、[第二会话工具记录](evidence/v03/codex-v03-review-second.jsonl)。GUI 创建→Codex 查询/接手/交付→GUI 退回→新会话读取修改意见/重新交付→GUI 验收；始终同一条记录，每会话 4 次真实 MCP 调用。报告由真实 Agent 生成，验收按钮由测试控制器操作，不代表用户日常验收 |
+| 真实 Codex 编码任务 | BLOCKED：[实际记录](evidence/v03/codex-coding-blocked.jsonl)。自动审批策略拒绝目录检查与 `node --version`，返回 `blocked by policy`。Agent 如实写回 `blocked`、下一步及所需环境，没有创建代码或运行测试，也没有通过更改权限重试 |
+| Windows 交付 | PASS：0.3.0 NSIS x64 与免安装 ZIP 构建；[release 启动记录](evidence/v03/release-startup.json)确认版本、窗口响应、SQLite 和数据目录下的 WebView 缓存，stderr 为空。安装/卸载向导未执行 |
+| 仍未现场验证 | Windows 物理全局按键触发、托盘点击、鼠标拖动/边缘缩放、快捷键被其他应用占用时的实测、重新登录启动、Claude Code/Cursor 连接、用户日常使用验收均 NOT_RUN。登录启动注册项开关的 v0.2 实测保留在下方，本轮未重复 |
+
+Codex CLI 0.155.1 使用已有 ChatGPT 登录，测试沿用当前 `gpt-6-astra` 与 `max` 设置。MCP 仅以临时命令行配置连接隔离数据库，没有修改用户客户端配置、安装全局 Skill，或往日常看板写测试任务。编码演示的受阻记录与后续文字审阅使用不同任务/数据目录；文字审阅成功不代表编码执行问题已解决。
+
+Browser plugin 未提供，使用既有 Playwright 通过 debug WebView2 CDP 检查真实 Tauri 窗口。输入竞态检查只对当前测试 WebView 的 bridge 网络响应增加延迟，不伪造数据库结果；所有写入和 MCP 更新仍走真实接口。本轮未再尝试全局物理按键与托盘输入；此前 Windows Computer Use 曾报 `native pipe unavailable`，事件测试没有记作物理按键通过。
+
+本机完整测试脚本、截图与原始失败记录保存在 `%TEMP%\agentkanban-v03-20260922\`。其中保留了测试脚本的剪贴板读取方式/Windows 换行、默认三条预览、启动等待与定位范围修正记录；反馈输入框补充了固定的可访问名称，避免有初始内容时名称混入正文。最终发布版不含测试注入代码。
+
+0.3 升级会将数据库迁移到 schema 2。先关闭旧 GUI 与旧 MCP 进程、备份完整数据目录，再更新两个程序；不能用旧版程序打开迁移后的库。以下保留 v0.2/v0.1 历史实测，不将旧版只读界面规则误作当前功能限制。
+
 ## v0.2 实测结果（2026-09-22）
 
 本轮新增接入诊断、实际路径配置复制、本地 MCP 自检、久未更新提示、项目聚焦与置顶、只读详情、可选登录启动及全局快捷键。保留下方 v0.1 原始结果。

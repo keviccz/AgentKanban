@@ -1,24 +1,24 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { checkMcp, native, readDesktopSettings, readIntegrationInfo, setAutostart, setShortcut } from './bridge';
-import { isStale, relativeTime } from './display';
-import { labels, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Project, type Task } from './types';
+import { type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences } from './types';
 import guidance from '../docs/AGENT_RULES.md?raw';
 
-export function Panel({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+export function Panel({ title, children, onClose, initialFocus, busy = false }: { title: string; children: ReactNode; onClose: () => void; initialFocus?: RefObject<HTMLInputElement | null>; busy?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const node = dialog.current;
     node?.showModal();
+    initialFocus?.current?.focus();
     return () => node?.close();
-  }, []);
-  function close() { dialog.current?.close(); onClose(); }
+  }, [initialFocus]);
+  function close() { if (!busy) { dialog.current?.close(); onClose(); } }
   return <dialog ref={dialog} className="panel" aria-label={title} onCancel={event => { event.preventDefault(); close(); }}>
-    <div className="panel-heading"><h2>{title}</h2><button className="text-button" autoFocus onClick={close}>返回看板</button></div>
+    <div className="panel-heading"><h2>{title}</h2><button className="text-button" autoFocus={!initialFocus} disabled={busy} onClick={close}>返回看板</button></div>
     {children}
   </dialog>;
 }
 
-function CopyButton({ text, label = '复制' }: { text: string; label?: string }) {
+export function CopyButton({ text, label = '复制' }: { text: string; label?: string }) {
   const [message, setMessage] = useState('');
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -30,25 +30,7 @@ function CopyButton({ text, label = '复制' }: { text: string; label?: string }
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setMessage(''), 2400);
   }
-  return <span className="copy-control"><button className="text-button" onClick={() => void copy()}>{label}</button><span className="copy-result" role="status">{message}</span></span>;
-}
-
-export function TaskDetails({ task, project, preferences, now, onClose }: { task: Task; project: Project; preferences: Preferences; now: number; onClose: () => void }) {
-  const summary = `${project.name} / ${task.title}\n状态：${labels[task.status]}\n进展：${task.progress || '尚未补充进展'}\n项目：${project.path}\n任务标识：${task.task_key}${task.branch ? `\n分支：${task.branch}` : ''}\n最后上报：${task.updated_at}`;
-  return <Panel title="任务详情" onClose={onClose}><div className="panel-body task-details">
-    <div className="detail-status"><span className={`status ${task.status}`}><span className="status-dot" />{labels[task.status]}</span>{isStale(task, preferences.stale_after_hours, now) && <span className="stale">较久未更新</span>}</div>
-    <h3>{task.title}</h3>
-    <p className="detail-progress">{task.progress || '尚未补充进展'}</p>
-    <CopyButton text={summary} label="复制任务摘要" />
-    <dl>
-      <dt>项目</dt><dd>{project.name}</dd>
-      <dt>项目路径 <CopyButton text={project.path} /></dt><dd>{project.path}</dd>
-      <dt>任务标识 <CopyButton text={task.task_key} /></dt><dd>{task.task_key}</dd>
-      {task.branch && <><dt>分支 <CopyButton text={task.branch} /></dt><dd>{task.branch}</dd></>}
-      <dt>Agent 最后上报</dt><dd><time dateTime={task.updated_at}>{new Date(task.updated_at).toLocaleString('zh-CN')}</time>（{relativeTime(task.updated_at, now)}）</dd>
-    </dl>
-    <p className="hint">状态来自 Agent 最后一次上报，不代表它此刻仍在运行。修改任务请告诉 Agent。</p>
-  </div></Panel>;
+  return <span className="copy-control"><button type="button" className="text-button" onClick={() => void copy()}>{label}</button><span className="copy-result" role="status">{message}</span></span>;
 }
 
 export function Settings({ preferences, busy, saveError, update, onShortcutChanged, onClose }: { preferences: Preferences; busy: boolean; saveError: string; update: (patch: Partial<Preferences>) => void; onShortcutChanged: () => void; onClose: () => void }) {
@@ -99,7 +81,7 @@ export function Settings({ preferences, busy, saveError, update, onShortcutChang
           <label className="setting-row"><span>登录 Windows 时启动</span><input type="checkbox" checked={desktop?.autostart_enabled ?? false} disabled={!desktop || working || Boolean(desktop.autostart_error)} onChange={event => void toggle('autostart', event.target.checked)} /></label>
           <p className="hint">启动桌面浮窗。即使浮窗关闭，Agent 仍可通过 MCP 更新任务。</p>
           {desktop?.autostart_error && <p className="panel-error">{desktop.autostart_error}</p>}
-          <label className="setting-row"><span>显示 / 隐藏快捷键<small>Ctrl + Alt + K</small></span><input type="checkbox" checked={desktop?.shortcut_enabled ?? false} disabled={!desktop || working || busy} onChange={event => void toggle('shortcut', event.target.checked)} /></label>
+          <label className="setting-row"><span>全局快捷键<small>Ctrl + Alt + K　显示 / 隐藏<br />Ctrl + Alt + N　快速新建</small></span><input type="checkbox" checked={desktop?.shortcut_enabled ?? false} disabled={!desktop || working || busy} onChange={event => void toggle('shortcut', event.target.checked)} /></label>
           <p className="hint">看板在托盘运行时也有效；退出程序后快捷键随之释放。</p>
           {desktop?.shortcut_error && <p className="panel-error">{desktop.shortcut_error}</p>}
         </section>

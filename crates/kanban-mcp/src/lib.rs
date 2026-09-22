@@ -8,7 +8,7 @@ use std::io::{self, BufRead, Write};
 const PROTOCOL_VERSION: &str = "2025-11-25";
 const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_LINE_BYTES: usize = 1024 * 1024;
-const INSTRUCTIONS: &str = "Track only work the user explicitly asks to put on the board. Reuse project_path + a stable task_key. Query unfinished tasks when resuming; upsert only meaningful start/progress/block/completion changes. Use done for completion. Do not log chats or commands. Status is the agent's last report, not a live activity signal.";
+const INSTRUCTIONS: &str = "Track explicitly requested work only. Before taking over or resuming, task_list by project_path + the original task_key (include_done if needed), read request/user_note, then reuse that key and current updated_at as expected_updated_at. Re-read on Conflict. Update meaningful progress, next_action, needs_input and deliverables; clear obsolete needs_input explicitly. done submits new work for human review, not acceptance; rejected work reappears as todo/changes_requested. Never claim human acceptance or alter request/user_note. Do not log chats/commands. agent_updated_at is the last Agent report, not a live signal.";
 
 pub fn serve(db: Database, mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
     let mut server = Server::new(db);
@@ -256,10 +256,11 @@ pub fn tool_definitions() -> Vec<Value> {
     let project_path = json!({"type":"string","minLength":1,"description":"Absolute existing project directory. Git worktrees share their repository."});
     let task_key = json!({"type":"string","minLength":1,"maxLength":160,"description":"Stable feature key reused across sessions."});
     let status = json!({"type":"string","enum":["todo","in_progress","blocked","done"]});
+    let expected = json!({"type":"string","minLength":1,"maxLength":64,"description":"Latest updated_at from task_list. Conflict requires re-reading before retry."});
     vec![
         json!({
             "name":"task_upsert",
-            "description":"Create or update one explicitly tracked task. Same project + task_key is idempotent. Supply all visible fields; omitted/null branch clears it. Restore archived tasks first. Returns only id, status, updated_at.",
+            "description":"Create or update tracked work using its original key. title/status/progress replace; omitted/null branch clears. New Agent fields are optional patches; omission preserves. done awaits human review. Restore archived tasks first. Returns id/status/updated_at.",
             "inputSchema":{
                 "type":"object","additionalProperties":false,
                 "properties":{
@@ -267,7 +268,12 @@ pub fn tool_definitions() -> Vec<Value> {
                     "title":{"type":"string","minLength":1,"maxLength":200},
                     "status":status,
                     "progress":{"type":"string","maxLength":600,"description":"One short line about meaningful progress or the blocker."},
-                    "branch":{"type":["string","null"],"minLength":1,"maxLength":200}
+                    "branch":{"type":["string","null"],"minLength":1,"maxLength":200},
+                    "agent":{"type":["string","null"],"maxLength":100,"description":"Agent attribution. Omitted/null preserves; empty string clears."},
+                    "next_action":{"type":"string","maxLength":600,"description":"Next concrete step; empty string clears."},
+                    "needs_input":{"type":"string","maxLength":600,"description":"User input needed; empty string clears. Not cleared automatically on status changes."},
+                    "deliverables":{"type":"array","maxItems":5,"description":"Replace delivery references; [] clears. Paths or http(s) URLs are stored, never opened by this tool.","items":{"type":"object","additionalProperties":false,"properties":{"label":{"type":"string","minLength":1,"maxLength":100},"uri":{"type":"string","minLength":1,"maxLength":1000}},"required":["label","uri"]}},
+                    "expected_updated_at":expected
                 },
                 "required":["project_path","task_key","title","status","progress"]
             },
@@ -275,11 +281,11 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name":"task_list",
-            "description":"Resume tracked work. Defaults to 20 unfinished, unarchived tasks; optional project/status filters. Follow next_offset for more. Explicit status=done includes completed tasks.",
+            "description":"Read current work, original request, user feedback, delivery and review fields before updating. Optional exact task_key filter. Defaults to 20 unfinished/unarchived items; done tasks still require include_done or status=done. Follow next_offset for more.",
             "inputSchema":{
                 "type":"object","additionalProperties":false,
                 "properties":{
-                    "project_path":project_path,"status":status,
+                    "project_path":project_path,"task_key":task_key,"status":status,
                     "include_done":{"type":"boolean","default":false},
                     "include_archived":{"type":"boolean","default":false},
                     "limit":{"type":"integer","minimum":1,"maximum":100,"default":20},
@@ -293,7 +299,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "description":"Hide a task without deleting data, or restore with archived=false. Returns only id, status, updated_at.",
             "inputSchema":{
                 "type":"object","additionalProperties":false,
-                "properties":{"project_path":project_path,"task_key":task_key,"archived":{"type":"boolean","default":true}},
+                "properties":{"project_path":project_path,"task_key":task_key,"archived":{"type":"boolean","default":true},"expected_updated_at":expected},
                 "required":["project_path","task_key"]
             },
             "annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}

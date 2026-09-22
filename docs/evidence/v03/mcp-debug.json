@@ -1,0 +1,104 @@
+{
+  "started_at": "2026-09-22T09:27:22.098Z",
+  "executable": "E:\\A_Projects\\AgentKanban\\target\\debug\\agentkanban-mcp.exe",
+  "node": "v24.19.0",
+  "platform": "win32",
+  "fixture_root": "C:\\Users\\AlexZ\\AppData\\Local\\Temp\\agentkanban-mcp-check-odcI3I",
+  "data_dir": "C:\\Users\\AlexZ\\AppData\\Local\\Temp\\agentkanban-mcp-check-odcI3I\\data",
+  "protocol_version": "2025-11-25",
+  "results": [
+    {
+      "name": "initialize, initialized notification, ping, and exactly three tool schemas",
+      "status": "PASS",
+      "duration_ms": 197
+    },
+    {
+      "name": "create and idempotent update preserve identity and Unicode data",
+      "status": "PASS",
+      "duration_ms": 155
+    },
+    {
+      "name": "blocked, complete, reopen, and default unfinished filtering",
+      "status": "PASS",
+      "duration_ms": 247
+    },
+    {
+      "name": "archive and restore retain the same task",
+      "status": "PASS",
+      "duration_ms": 228
+    },
+    {
+      "name": "restart restores committed tasks without a running GUI",
+      "status": "PASS",
+      "duration_ms": 57
+    },
+    {
+      "name": "four MCP processes concurrently write 32 distinct tasks without loss",
+      "status": "PASS",
+      "duration_ms": 661
+    },
+    {
+      "name": "default page size 20, explicit pagination, and project filters",
+      "status": "PASS",
+      "duration_ms": 130
+    },
+    {
+      "name": "invalid inputs and unknown methods/tools return explicit errors",
+      "status": "PASS",
+      "duration_ms": 64
+    },
+    {
+      "name": "compatible 2024-11-05 protocol handshake",
+      "status": "PASS",
+      "duration_ms": 53
+    },
+    {
+      "name": "database write failure is returned to the initialized client",
+      "status": "PASS",
+      "duration_ms": 66
+    },
+    {
+      "name": "unavailable data directory produces an explicit failure",
+      "status": "PASS",
+      "duration_ms": 18
+    },
+    {
+      "name": "v0.3 Agent handoff fields round-trip with compact write receipts",
+      "status": "PASS",
+      "duration_ms": 75
+    },
+    {
+      "name": "v0.3 omitted handoff fields preserve values, explicit empty clears, and no-op keeps timestamps",
+      "status": "PASS",
+      "duration_ms": 299
+    },
+    {
+      "name": "v0.3 completion waits for human review and reopening resets pending review",
+      "status": "PASS",
+      "duration_ms": 394
+    },
+    {
+      "name": "v0.3 exact task_key lookup respects project, completed, and archived filters",
+      "status": "PASS",
+      "duration_ms": 419
+    },
+    {
+      "name": "v0.3 stale upsert and archive guards reject competing writes without data loss",
+      "status": "PASS",
+      "duration_ms": 340
+    },
+    {
+      "name": "v0.3 MCP cannot forge user requests, feedback, or acceptance",
+      "status": "PASS",
+      "duration_ms": 61
+    },
+    {
+      "name": "stdout remains protocol-only and notifications have no response",
+      "status": "PASS",
+      "duration_ms": 0
+    }
+  ],
+  "status": "PASS",
+  "finished_at": "2026-09-22T09:27:25.567Z",
+  "fixture_retained": false
+}

@@ -35,7 +35,8 @@ const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'agentkanban-mcp-check-'))
 const dataDir = path.join(fixtureRoot, 'data');
 const projectPath = path.join(fixtureRoot, '中文项目');
 const concurrentProject = path.join(fixtureRoot, 'concurrent-project');
-await Promise.all([dataDir, projectPath, concurrentProject].map((p) => mkdir(p, { recursive: true })));
+const handoffProject = path.join(fixtureRoot, 'handoff-project');
+await Promise.all([dataDir, projectPath, concurrentProject, handoffProject].map((p) => mkdir(p, { recursive: true })));
 const allClients = new Set();
 const results = [];
 const report = {
@@ -160,6 +161,7 @@ class McpClient {
     assert.ok(response.error || response.result?.isError, 'Expected an explicit tool or protocol error');
     const detail = response.error?.message ?? response.result?.content?.find((block) => block.type === 'text')?.text;
     assert.ok(typeof detail === 'string' && detail.trim().length > 0, 'Errors must explain the failure');
+    return detail;
   }
 
   async close() {
@@ -202,6 +204,45 @@ const task = {
   progress: '已明确要求记录到看板。',
   branch: 'feature/中文-kanban',
 };
+const handoffTask = {
+  project_path: handoffProject,
+  task_key: 'feature:handoff-delivery',
+  title: '交接需求与成果回传',
+  status: 'blocked',
+  progress: '等待确认报告样式。',
+  branch: 'feature/handoff',
+  agent: 'Codex-中文',
+  next_action: '收到样例后完善导出。',
+  needs_input: '请提供一份参考报告。',
+  deliverables: [
+    { label: '本地成果位置示例', uri: path.join(handoffProject, '预览.html') },
+    { label: '远程成果位置示例', uri: 'https://github.com/example/AgentKanban/pull/42' },
+  ],
+};
+
+async function getHandoffTask(current = client) {
+  const page = await current.call('task_list', {
+    project_path: handoffProject,
+    task_key: handoffTask.task_key,
+    include_done: true,
+    include_archived: true,
+  });
+  assert.equal(page.items.length, 1, 'Exact project and task key must identify one task');
+  assert.equal(page.next_offset, null);
+  return page.items[0];
+}
+
+function handoffUpdate(current, changes = {}) {
+  return {
+    project_path: handoffProject,
+    task_key: handoffTask.task_key,
+    title: current.title,
+    status: current.status,
+    progress: current.progress,
+    branch: current.branch,
+    ...changes,
+  };
+}
 
 try {
   await check('initialize, initialized notification, ping, and exactly three tool schemas', async () => {
@@ -389,6 +430,160 @@ try {
     } finally {
       await broken.close();
     }
+  });
+
+  await check('v0.3 Agent handoff fields round-trip with compact write receipts', async () => {
+    const receipt = await client.call('task_upsert', handoffTask);
+    assertCompact(receipt, 'blocked');
+    const stored = await getHandoffTask();
+    assert.equal(stored.id, receipt.id);
+    for (const field of ['agent', 'next_action', 'needs_input', 'deliverables']) {
+      assert.deepEqual(stored[field], handoffTask[field], `${field} must survive a protocol round-trip`);
+    }
+    assert.equal(stored.request, '');
+    assert.equal(stored.user_note, '');
+    assert.equal(stored.review_status, 'none');
+    assert.equal(stored.agent_updated_at, receipt.updated_at);
+    assert.ok(Number.isFinite(Date.parse(stored.agent_updated_at)));
+  });
+
+  await check('v0.3 omitted handoff fields preserve values, explicit empty clears, and no-op keeps timestamps', async () => {
+    let stored = await getHandoffTask();
+    const patch = handoffUpdate(stored, { progress: '已补充格式约束，仍等待参考报告。' });
+    delete patch.branch;
+    await client.call('task_upsert', patch);
+    stored = await getHandoffTask();
+    assert.equal(stored.branch, null, 'Legacy omitted branch still clears the branch');
+    for (const field of ['agent', 'next_action', 'needs_input', 'deliverables']) {
+      assert.deepEqual(stored[field], handoffTask[field], `Omitted ${field} must preserve its value`);
+    }
+    const beforeNoop = stored;
+    const repeated = await client.call('task_upsert', handoffUpdate(stored, { agent: null }));
+    assert.equal(repeated.updated_at, beforeNoop.updated_at);
+    stored = await getHandoffTask();
+    assert.deepEqual(stored, beforeNoop, 'Null agent preserves attribution; no-op must not refresh Agent activity');
+    await client.call('task_upsert', handoffUpdate(stored, {
+      agent: '', next_action: '', needs_input: '', deliverables: [],
+    }));
+    stored = await getHandoffTask();
+    assert.equal(stored.agent, null);
+    assert.equal(stored.next_action, '');
+    assert.equal(stored.needs_input, '');
+    assert.deepEqual(stored.deliverables, []);
+    for (const field of ['next_action', 'needs_input', 'deliverables']) {
+      await client.expectToolError('task_upsert', handoffUpdate(stored, { [field]: null }));
+    }
+    assert.deepEqual(await getHandoffTask(), stored, 'Rejected null patch values must not change the task');
+  });
+
+  await check('v0.3 completion waits for human review and reopening resets pending review', async () => {
+    let stored = await getHandoffTask();
+    const done = await client.call('task_upsert', handoffUpdate(stored, {
+      status: 'done', progress: '执行与必要检查完成，等待用户验收。', deliverables: handoffTask.deliverables,
+    }));
+    assertCompact(done, 'done');
+    stored = await getHandoffTask();
+    assert.equal(stored.review_status, 'pending');
+    const repeat = await client.call('task_upsert', handoffUpdate(stored));
+    assert.equal(repeat.updated_at, stored.updated_at);
+    assert.deepEqual(await getHandoffTask(), stored, 'Repeated completion must not change pending review');
+    await client.call('task_upsert', handoffUpdate(stored, {
+      status: 'in_progress', progress: '补充处理新的修改要求。',
+    }));
+    stored = await getHandoffTask();
+    assert.equal(stored.review_status, 'none');
+    await client.call('task_upsert', handoffUpdate(stored, {
+      status: 'done', progress: '补充工作完成，再次等待验收。',
+    }));
+    assert.equal((await getHandoffTask()).review_status, 'pending');
+    const directDone = { ...handoffTask, task_key: 'feature:handoff-direct-done', status: 'done' };
+    await client.call('task_upsert', directDone);
+    const directPage = await client.call('task_list', {
+      project_path: handoffProject, task_key: directDone.task_key, include_done: true,
+    });
+    assert.equal(directPage.items.length, 1);
+    assert.equal(directPage.items[0].review_status, 'pending', 'New tasks created as done also require review');
+  });
+
+  await check('v0.3 exact task_key lookup respects project, completed, and archived filters', async () => {
+    await client.call('task_upsert', { ...handoffTask, task_key: `${handoffTask.task_key}:child` });
+    const otherProject = path.join(fixtureRoot, 'handoff-other-project');
+    await mkdir(otherProject);
+    await client.call('task_upsert', { ...handoffTask, project_path: otherProject });
+    const exactQuery = { project_path: handoffProject, task_key: handoffTask.task_key };
+    assert.equal((await client.call('task_list', exactQuery)).items.length, 0, 'Exact lookup still excludes completed tasks by default');
+    assert.equal((await client.call('task_list', { ...exactQuery, task_key: 'feature:handoff' })).items.length, 0, 'A prefix is not an exact key');
+    const unscoped = await client.call('task_list', { task_key: handoffTask.task_key, include_done: true });
+    assert.equal(unscoped.items.length, 2, 'The same key in different projects remains distinct');
+    let stored = await getHandoffTask();
+    const scoped = await client.call('task_list', { ...exactQuery, status: 'done' });
+    assert.deepEqual(scoped.items.map((item) => item.id), [stored.id]);
+    const archived = await client.call('task_archive', exactQuery);
+    assertCompact(archived, 'done');
+    assert.equal((await client.call('task_list', { ...exactQuery, include_done: true })).items.length, 0);
+    assert.equal((await client.call('task_list', { ...exactQuery, include_archived: true })).items.length, 0);
+    stored = await getHandoffTask();
+    assert.equal(stored.archived, true);
+    await client.call('task_archive', { ...exactQuery, archived: false });
+    assert.equal((await getHandoffTask()).archived, false);
+  });
+
+  await check('v0.3 stale upsert and archive guards reject competing writes without data loss', async () => {
+    const competing = new McpClient();
+    try {
+      await competing.initialize();
+      const stale = await getHandoffTask(competing);
+      const updated = await client.call('task_upsert', handoffUpdate(stale, {
+        progress: '另一会话已补充最新验证结果。', expected_updated_at: stale.updated_at,
+      }));
+      const latest = await getHandoffTask();
+      assert.notEqual(updated.updated_at, stale.updated_at);
+      assert.equal(latest.agent_updated_at, updated.updated_at);
+      const conflict = await competing.expectToolError('task_upsert', handoffUpdate(stale, {
+        progress: '过期会话试图覆盖新进展。', agent: 'stale-agent', expected_updated_at: stale.updated_at,
+      }));
+      assert.match(conflict, /conflict/i);
+      const archiveConflict = await competing.expectToolError('task_archive', {
+        project_path: handoffProject, task_key: handoffTask.task_key,
+        archived: true, expected_updated_at: stale.updated_at,
+      });
+      assert.match(archiveConflict, /conflict/i);
+      assert.deepEqual(await getHandoffTask(), latest, 'Rejected stale writes must preserve all current fields and timestamps');
+      const archived = await client.call('task_archive', {
+        project_path: handoffProject, task_key: handoffTask.task_key,
+        archived: true, expected_updated_at: latest.updated_at,
+      });
+      assert.equal((await getHandoffTask()).archived, true, 'A matching guard should allow the write');
+      await client.call('task_archive', {
+        project_path: handoffProject, task_key: handoffTask.task_key,
+        archived: false, expected_updated_at: archived.updated_at,
+      });
+    } finally {
+      await competing.close();
+    }
+  });
+
+  await check('v0.3 MCP cannot forge user requests, feedback, or acceptance', async () => {
+    const stored = await getHandoffTask();
+    assert.equal(stored.review_status, 'pending');
+    for (const [field, value] of Object.entries({
+      request: 'Agent 试图替换用户原始需求。',
+      user_note: 'Agent 试图冒充人工意见。',
+      review_status: 'accepted',
+    })) {
+      await client.expectToolError('task_upsert', handoffUpdate(stored, { [field]: value }));
+      await client.expectToolError('task_archive', {
+        project_path: handoffProject, task_key: handoffTask.task_key, [field]: value,
+      });
+    }
+    const schemas = (await client.rpc('tools/list')).result.tools;
+    assert.equal(schemas.length, 3, 'Human review must not add an Agent-accessible write tool');
+    for (const schema of schemas) {
+      for (const field of ['request', 'user_note', 'review_status']) {
+        assert.ok(!(field in schema.inputSchema.properties), `${schema.name} must not advertise ${field} as writable`);
+      }
+    }
+    assert.deepEqual(await getHandoffTask(), stored, 'Forbidden human-field writes must leave the record unchanged');
   });
 
   await check('stdout remains protocol-only and notifications have no response', async () => {
