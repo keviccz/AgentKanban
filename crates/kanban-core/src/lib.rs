@@ -297,6 +297,13 @@ impl Database {
         )?)
     }
 
+    /// The latest reported task change, including archived tasks; not a live-agent heartbeat.
+    pub fn last_task_update(&self) -> Result<Option<String>> {
+        Ok(self
+            .connect()?
+            .query_row("SELECT MAX(updated_at) FROM tasks", [], |row| row.get(0))?)
+    }
+
     pub fn board(&self) -> Result<BoardSnapshot> {
         let mut conn = self.connect()?;
         let tx = conn.transaction()?;

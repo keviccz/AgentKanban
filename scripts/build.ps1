@@ -11,6 +11,8 @@ Copy-Item -LiteralPath scripts/write-client-examples.ps1 -Destination release/Ag
 $installer = Get-ChildItem -LiteralPath target/release/bundle/nsis -Filter '*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $installer) { throw 'NSIS installer not found' }
 Copy-Item -LiteralPath $installer.FullName -Destination release -Force
-Compress-Archive -Path release/AgentKanban -DestinationPath release/AgentKanban-0.1.0-windows-x64.zip -Force
+$version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+$archive = "release/AgentKanban-$version-windows-x64.zip"
+Compress-Archive -Path release/AgentKanban -DestinationPath $archive -Force
 Write-Output "Installer: release/$($installer.Name)"
-Write-Output 'Portable: release/AgentKanban-0.1.0-windows-x64.zip'
+Write-Output "Portable: $archive"

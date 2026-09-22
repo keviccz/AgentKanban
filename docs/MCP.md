@@ -1,10 +1,18 @@
 # MCP 接入与任务契约
 
-AgentKanban 提供一个独立的本地 stdio MCP 程序 `agentkanban-mcp.exe`，只有 `task_upsert`、`task_list` 和 `task_archive` 三个工具。它直接写入与浮窗共用的 SQLite；窗口不必保持运行。协议使用 UTF-8 的逐行 JSON-RPC 消息，标准输出只用于协议，诊断写入标准错误。[MCP stdio 规范](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+AgentKanban 提供一个独立的本地 stdio MCP 程序 `agentkanban-mcp.exe`，只有 `task_upsert`、`task_list` 和 `task_archive` 三个工具。它由客户端按需启动，直接写入与浮窗共用的 SQLite；GUI 没有运行时仍可写入，无需单独启动 MCP，也无需让 Coding Agent 随 Windows 登录启动。协议使用 UTF-8 的逐行 JSON-RPC 消息，标准输出只用于协议，诊断写入标准错误。[MCP stdio 规范](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+
+## 从浮窗接入
+
+设置中的接入区域展示当前程序、MCP 可执行文件和数据目录的实际路径，并可复制客户端配置与简短同步规则。安装位置或免安装包位置变化后，应重新复制实际路径；静态示例中的默认路径不会自动跟随移动。
+
+本地自检用于确认本机 MCP 可执行文件能启动并完成协议响应。**自检通过只证明本地 MCP 可用，不证明 Codex、Claude Code 或 Cursor 已连接。** 完成配置后，仍需到目标客户端检查工具加载，并让真实 Agent 查询或更新一次任务。只读取配置、复制配置或检查语法，都不能代替这一步。
+
+若本地自检失败，先按界面返回的具体错误检查可执行文件与数据目录；若自检通过但客户端不可用，检查客户端使用的绝对路径、MCP 是否已刷新及客户端自身的连接错误。浮窗和客户端若使用不同的 `AGENTKANBAN_DATA_DIR`，会看到不同的看板。
 
 ## 配置客户端
 
-以下文件是合并示例，路径中的 `YOUR_NAME` 必须替换。推荐通过 `scripts/write-client-examples.ps1 -Executable <实际绝对路径>` 生成含本机路径的文件。不要用示例覆盖已有的完整配置。AgentKanban 无须 API Key。
+优先复制浮窗生成的实际路径配置。以下文件是合并示例，路径中的 `YOUR_NAME` 必须替换；也可通过 `scripts/write-client-examples.ps1 -Executable <实际绝对路径>` 生成独立示例文件。复制或生成示例不会自动修改客户端配置，不要用示例覆盖已有的完整配置。AgentKanban 无须 API Key。
 
 ### Codex
 
@@ -44,7 +52,7 @@ claude mcp add --transport stdio --scope user agentkanban -- "$env:LOCALAPPDATA\
 }
 ```
 
-这些步骤属于本地 Windows 客户端配置。远程容器、WSL 和云端 Agent 不能仅靠上述 Windows 路径访问本地看板，v0.1 不提供远程传输。
+这些步骤属于本地 Windows 客户端配置。远程容器、WSL 和云端 Agent 不能仅靠上述 Windows 路径访问本地看板，当前不提供远程传输。
 
 ## 更新规则
 
@@ -53,10 +61,18 @@ claude mcp add --transport stdio --scope user agentkanban -- "$env:LOCALAPPDATA\
 - 开始执行、阶段变化、遇到阻塞和完成时，用一句话概括实质进展。无变化时不重复写入，不复制聊天历史、完整日志或敏感凭据。
 - 后续会话先 `task_list` 查询当前项目未完成项，找到原记录后继续更新。若可能已完成或已归档，显式扩展查询范围。
 - 标题描述功能；`progress` 说明目前结果或阻塞。`in_progress` 只表示最近一次上报，不是进程存活检测。
+- `blocked` 用于实际阻碍继续推进的输入、依赖或外部问题；单纯耗时或久未更新不构成阻塞。只有工作与必要验证完成后才标记 `done`，未验证的范围应如实说明。
+- 通过 MCP 工具读写任务，不直接编辑 SQLite；只有工具返回成功，才可声称已同步。
 
-可将以下短说明按需放进项目 Agent 指令：
+可将 [AGENT_RULES.md](AGENT_RULES.md) 的短中文规则复制进项目 Agent 指令。浮窗复制的同步规则与该文件保持一致。
 
-> 用户明确要求跟踪某功能时使用 AgentKanban。先按项目查询，使用稳定 task_key；只在开始、实质进展、受阻或完成时更新原任务。普通问答不入板，不记录命令流水和聊天历史。后续会话查询未完成项继续原任务。
+另有 [可选 Skill 示例](../examples/agentkanban/SKILL.md)，适合在支持 Skill 的 Agent 中按需使用。它只补充记录与同步流程，不启动 MCP、不增加工具，也不能代替上述客户端配置；仓库提供示例，不自动安装或修改全局 Agent 指令。
+
+## 浮窗提示与任务状态
+
+v0.2 的久未更新提示只作用于 `in_progress` 和 `blocked`，默认阈值为 24 小时，可关闭或设为 1、4、8、24、48、168 小时。它根据服务器记录的 `updated_at` 展示提示，不写回任务、不改变四种状态。Agent 不应为了消除提示而制造无实质变化的更新。
+
+项目聚焦、项目置顶和只读详情属于查看功能；复制全文、路径或分支不会修改任务。窗口快捷键及 Windows 登录启动只管理浮窗，MCP 仍由使用它的客户端按需启动。
 
 ## 三个工具
 
@@ -133,7 +149,7 @@ claude mcp add --transport stdio --scope user agentkanban -- "$env:LOCALAPPDATA\
 
 项目显示名称默认取目录名。Git 主仓库及其 worktree 共用项目身份；分支只是标签。非 Git 项目按指定目录识别，不同目录即使同名也保持独立。内容完全相同的重复更新保持原更新时间，不将一次无变化的调用显示为新进展。
 
-多个客户端可各自启动独立 MCP 进程，共用数据库。对不同任务的更新互不覆盖；同一任务的并发更新以最后成功写入为准，v0.1 不保存每次更新的事件历史。
+多个客户端可各自启动独立 MCP 进程，共用数据库。对不同任务的更新互不覆盖；同一任务的并发更新以最后成功写入为准，当前不保存每次更新的事件历史。
 
 参数错误、不存在的归档目标和数据库写入错误会显式返回，Agent 应说明失败并保留原任务标识。只有收到成功结果才可声称看板已同步。锁等待有上限；持久锁定、目录不可写或磁盘错误不会被当作成功。
 

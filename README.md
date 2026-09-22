@@ -2,21 +2,38 @@
 
 由 Coding Agent 维护的 Windows 桌面任务浮窗。你说「把这个功能加入看板，后续同步进展」，Agent 通过本地 MCP 创建任务，并在开始、阶段变化、受阻和完成时更新同一条记录。
 
-看板按项目展示待办、进行中、受阻和已完成任务。文字录入交给 Agent；浮窗负责查看、筛选和折叠。应用本身不调用模型 API。
+看板按项目展示待办、进行中、受阻和已完成任务。文字录入交给 Agent；浮窗负责查看、筛选、聚焦和复制详情。应用本身不调用模型 API。
 
 ## 启动
 
 安装构建产物中的 Windows 安装包，然后从开始菜单打开 AgentKanban。安装目录内同时包含 `agentkanban.exe` 和 `agentkanban-mcp.exe`；后者由客户端按需启动，无须单独双击。
 
-交付文件在 `release/`：`AgentKanban_0.1.0_x64-setup.exe` 是安装包，`AgentKanban-0.1.0-windows-x64.zip` 是免安装包。免安装包解压后运行 `AgentKanban/agentkanban.exe`，仍使用统一的本地数据目录。
+交付文件在 `release/`：`AgentKanban_<版本>_x64-setup.exe` 是安装包，`AgentKanban-<版本>-windows-x64.zip` 是免安装包。免安装包解压后运行 `AgentKanban/agentkanban.exe`，仍使用统一的本地数据目录。
 
 默认浮窗约 380 × 520，支持拖动、缩放、置顶开关和明暗主题。收起后显示进行中与受阻数量。关闭按钮隐藏到托盘；通过托盘菜单重新显示或退出。主题、窗口位置、尺寸和展开状态会保留。
 
 每个项目默认预览三条未完成任务，其余点击展开；已完成默认折叠。内容超出时在窗口内滚动，任务更新不会强制展开项目。
 
+## 日常查看
+
+- **项目聚焦与置顶**：聚焦某个项目可只看它的任务，退出聚焦回到所有项目；常用项目可置顶排列。项目置顶与窗口始终置顶是两个独立操作。
+- **任务详情**：打开任务查看完整标题、进展、项目路径与分支，可复制长文本或单个字段。详情为只读，修改任务仍交给 Agent。
+- **久未更新提示**：默认对超过 24 小时没有更新的进行中、受阻任务显示提示；可关闭，或改为 1、4、8、24、48、168 小时。提示不会修改状态，也不会自动把任务判定为受阻或完成。
+- **显示与隐藏**：全局快捷键 `Ctrl+Alt+K` 可切换浮窗显示/隐藏，可在设置中关闭。快捷键仅在 AgentKanban 运行时有效；退出后需要重新启动应用。
+- **登录启动**：可在设置中选择 Windows 登录后启动浮窗，默认关闭。它只启动看板，无需让 Coding Agent 随 Windows 启动。
+
 ## 连接 Agent
 
-客户端连接的是本机的 `agentkanban-mcp.exe`。先确定可执行文件的实际绝对路径，再按 [MCP 接入说明](docs/MCP.md) 合并配置。仓库提供 [Codex](examples/codex.toml)、[Claude Code](examples/claude-code.mcp.json) 和 [Cursor](examples/cursor.mcp.json) 示例，不会自动修改任何客户端配置。
+首次接入可按以下顺序操作：
+
+1. 打开浮窗设置中的接入区域，查看当前程序、MCP 和数据目录的实际路径。
+2. 运行本地自检，确认本机 `agentkanban-mcp.exe` 能启动并响应。
+3. 为 Codex、Claude Code 或 Cursor 复制含实际路径的配置，按 [MCP 接入说明](docs/MCP.md) 合并到该客户端，再刷新或重启其 MCP 连接。
+4. 在客户端确认三个工具可用，再明确要求 Agent 记录一个功能，并检查浮窗中的实际结果。
+
+**本地自检通过不等于客户端已连接。** 自检不能证明客户端已读取配置，也不能代替一次真实 Agent 工具调用。复制配置不会自动修改客户端文件。
+
+仓库另提供 [Codex](examples/codex.toml)、[Claude Code](examples/claude-code.mcp.json) 和 [Cursor](examples/cursor.mcp.json) 静态示例，使用前需替换示例路径。
 
 也可以用 PowerShell 7 生成含本机路径的独立示例文件：
 
@@ -31,6 +48,10 @@ pwsh -NoProfile -File .\scripts\write-client-examples.ps1 -Executable "$env:LOCA
 > 把当前项目的「导出报告」功能加入 AgentKanban，task_key 用 `feature:export-report`，后续在有实质进展时更新同一条任务。
 
 后续会话先按项目查询未完成项，继续原 `task_key`。普通问答不入板。「进行中」代表 Agent 最后上报的状态；Agent 意外退出不会自动变成完成，更新时间用于判断记录的新鲜程度。
+
+设置中可复制 [简短同步规则](docs/AGENT_RULES.md)，按需放进项目 Agent 指令；仓库还提供 [可选 AgentKanban Skill](examples/agentkanban/SKILL.md)。Skill 补充何时记录与更新的工作规则，不能代替 MCP 配置，也不会随应用自动安装到全局。
+
+MCP 进程由客户端按需启动，GUI 没有运行时仍可写入。需要查看时再打开浮窗即可；无需一直运行浮窗，也无需设置 Coding Agent 开机启动。
 
 ## 从源码开发与构建
 
@@ -73,4 +94,6 @@ GUI 与 MCP 共用 Rust 数据模块。浮窗退出后 MCP 仍可写入，重新
 
 项目名称默认取目录名，同一 Git 仓库的 worktree 归入同一项目，非 Git 目录按指定目录识别。`task_key` 与项目身份共同定位任务；同名目录和任务标题不用于去重。
 
-v0.1 面向单机本地使用，不包含云同步、远程 Agent、日历提醒和插件市场分发。自动检查、客户端现场连接、Windows 窗口行为及用户体验验收分别记录，未执行的项目不会标作已通过。
+应用面向单机本地使用，不包含云同步、远程 Agent、日历提醒和插件市场分发。久未更新提示只帮助查看已有记录，不提供 Agent 存活检测或后台催办。
+
+[验收记录](docs/VERIFICATION.md) 包含 v0.2 的实测范围，并保留 v0.1 原始证据。本地 MCP 自检、客户端连接、Windows 注册项/窗口行为和用户日常体验分别记录；未执行的项目不标作通过。

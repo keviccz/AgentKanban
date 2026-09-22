@@ -1,6 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod integration;
+mod preferences;
+
 use kanban_core::{BoardSnapshot, Database};
+use preferences::Preferences;
 use serde::{Deserialize, Serialize};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -11,30 +15,24 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, State, WebviewWindow,
 };
+use tauri_plugin_autostart::ManagerExt as AutostartExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(default)]
-struct Preferences {
-    theme: String,
-    always_on_top: bool,
-    compact: bool,
-    filter: String,
-    collapsed_projects: Vec<i64>,
-    expanded_projects: Vec<i64>,
-    completed_projects: Vec<i64>,
+const SHORTCUT: &str = "Ctrl+Alt+K";
+
+#[derive(Default)]
+struct DesktopErrors {
+    autostart: Option<String>,
+    shortcut: Option<String>,
 }
-impl Default for Preferences {
-    fn default() -> Self {
-        Self {
-            theme: "light".into(),
-            always_on_top: true,
-            compact: false,
-            filter: "all".into(),
-            collapsed_projects: vec![],
-            expanded_projects: vec![],
-            completed_projects: vec![],
-        }
-    }
+
+#[derive(Serialize)]
+struct DesktopSettings {
+    autostart_enabled: bool,
+    shortcut_enabled: bool,
+    shortcut: &'static str,
+    autostart_error: Option<String>,
+    shortcut_error: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -59,6 +57,8 @@ impl Default for Geometry {
 struct AppState {
     db: Database,
     preferences: Mutex<Preferences>,
+    preferences_save: Mutex<()>,
+    desktop_errors: Mutex<DesktopErrors>,
     geometry: Mutex<Geometry>,
     geometry_save: Mutex<()>,
     geometry_dirty: AtomicBool,
@@ -92,6 +92,23 @@ fn show_window(app: &tauri::AppHandle) {
     }
 }
 
+fn toggle_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let result = (|| -> Result<(), String> {
+        if window.is_visible().map_err(error)? && !window.is_minimized().map_err(error)? {
+            hide_window(window, app.state())?;
+        } else {
+            show_window(app);
+        }
+        Ok(())
+    })();
+    if let Err(err) = result {
+        let _ = app.emit("app-error", format!("快捷键切换窗口失败：{err}"));
+    }
+}
+
 #[tauri::command]
 fn get_snapshot(state: State<AppState>) -> Result<BoardSnapshot, String> {
     state.db.board().map_err(error)
@@ -113,16 +130,13 @@ fn set_preferences(
     state: State<AppState>,
     preferences: Preferences,
 ) -> Result<Preferences, String> {
-    if !["light", "dark"].contains(&preferences.theme.as_str())
-        || !["all", "in_progress", "blocked", "todo"].contains(&preferences.filter.as_str())
-    {
-        return Err("无效的显示设置".into());
-    }
-    // Compact geometry belongs to the native window command, never a stale UI snapshot.
+    let _writer = state.preferences_save.lock().map_err(error)?;
+    preferences.validate()?;
+    // Native-owned fields must not be overwritten by an older UI snapshot.
     let previous = state.preferences.lock().map_err(error)?.clone();
-    let compact = previous.compact;
     let next = Preferences {
-        compact,
+        compact: previous.compact,
+        shortcut_enabled: previous.shortcut_enabled,
         ..preferences
     };
     window
@@ -145,6 +159,7 @@ fn set_compact(
     state: State<AppState>,
     compact: bool,
 ) -> Result<Preferences, String> {
+    let _writer = state.preferences_save.lock().map_err(error)?;
     let previous = state.preferences.lock().map_err(error)?.clone();
     if previous.compact == compact {
         return Ok(previous);
@@ -206,6 +221,146 @@ fn hide_window(window: WebviewWindow, state: State<AppState>) -> Result<(), Stri
     window.hide().map_err(error)
 }
 
+fn desktop_settings(app: &tauri::AppHandle, state: &AppState) -> Result<DesktopSettings, String> {
+    let enabled = app.autolaunch().is_enabled();
+    let mut errors = state.desktop_errors.lock().map_err(error)?;
+    let autostart_enabled = match enabled {
+        Ok(enabled) => {
+            errors.autostart = None;
+            enabled
+        }
+        Err(err) => {
+            errors.autostart = Some(format!("读取开机启动设置失败：{err}"));
+            false
+        }
+    };
+    Ok(DesktopSettings {
+        autostart_enabled,
+        shortcut_enabled: app.global_shortcut().is_registered(SHORTCUT),
+        shortcut: SHORTCUT,
+        autostart_error: errors.autostart.clone(),
+        shortcut_error: errors.shortcut.clone(),
+    })
+}
+
+#[tauri::command]
+fn get_desktop_settings(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<DesktopSettings, String> {
+    desktop_settings(&app, &state)
+}
+
+#[tauri::command]
+fn set_autostart(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    enabled: bool,
+) -> Result<DesktopSettings, String> {
+    let manager = app.autolaunch();
+    match manager.is_enabled() {
+        Ok(actual) if actual == enabled => return desktop_settings(&app, &state),
+        Ok(_) => {}
+        Err(err) => {
+            let message = format!("读取开机启动设置失败：{err}");
+            state.desktop_errors.lock().map_err(error)?.autostart = Some(message.clone());
+            return Err(message);
+        }
+    }
+    let changed = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    if let Err(err) = changed {
+        let message = format!("修改开机启动设置失败：{err}");
+        state.desktop_errors.lock().map_err(error)?.autostart = Some(message.clone());
+        return Err(message);
+    }
+    state.desktop_errors.lock().map_err(error)?.autostart = None;
+    let actual = desktop_settings(&app, &state)?;
+    if let Some(err) = &actual.autostart_error {
+        return Err(err.clone());
+    }
+    if actual.autostart_enabled != enabled {
+        return Err("开机启动设置未达到请求状态，请检查系统设置".into());
+    }
+    Ok(actual)
+}
+
+#[tauri::command]
+fn set_shortcut_enabled(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    enabled: bool,
+) -> Result<DesktopSettings, String> {
+    let _writer = state.preferences_save.lock().map_err(error)?;
+    let previous = state.preferences.lock().map_err(error)?.clone();
+    let previous_registered = app.global_shortcut().is_registered(SHORTCUT);
+    let next = Preferences {
+        shortcut_enabled: enabled,
+        ..previous
+    };
+    let encoded = serde_json::to_string(&next).map_err(error)?;
+    if enabled != previous_registered {
+        let changed = if enabled {
+            app.global_shortcut().register(SHORTCUT)
+        } else {
+            app.global_shortcut().unregister(SHORTCUT)
+        };
+        if let Err(err) = changed {
+            let message = format!(
+                "无法{}快捷键 {SHORTCUT}：{err}",
+                if enabled { "注册" } else { "停用" }
+            );
+            state.desktop_errors.lock().map_err(error)?.shortcut = Some(message.clone());
+            return Err(message);
+        }
+    }
+    if let Err(err) = state.db.set_setting("ui", &encoded) {
+        let rollback = if enabled != previous_registered {
+            if previous_registered {
+                app.global_shortcut().register(SHORTCUT)
+            } else {
+                app.global_shortcut().unregister(SHORTCUT)
+            }
+        } else {
+            Ok(())
+        };
+        let message = match rollback {
+            Ok(()) => format!("快捷键设置保存失败，已恢复原状态：{err}"),
+            Err(rollback_err) => {
+                format!("快捷键设置保存失败：{err}；恢复原状态也失败：{rollback_err}")
+            }
+        };
+        state.desktop_errors.lock().map_err(error)?.shortcut = Some(message.clone());
+        return Err(message);
+    }
+    *state.preferences.lock().map_err(error)? = next;
+    state.desktop_errors.lock().map_err(error)?.shortcut = None;
+    desktop_settings(&app, &state)
+}
+
+#[tauri::command]
+fn get_integration_info(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<integration::IntegrationInfo, String> {
+    integration::info(&state.db, &app.package_info().version.to_string())
+}
+
+#[tauri::command]
+async fn check_mcp(state: State<'_, AppState>) -> Result<integration::McpCheck, String> {
+    let executable = integration::mcp_path()?;
+    let data_dir = state
+        .db
+        .path()
+        .parent()
+        .ok_or("无法定位数据库目录")?
+        .to_path_buf();
+    Ok(integration::check(executable, data_dir).await)
+}
+
 fn run() -> tauri::Result<()> {
     let mut context = tauri::generate_context!();
     // Build the window below so the WebView builder can use an absolute data path.
@@ -223,6 +378,20 @@ fn run() -> tauri::Result<()> {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_window(app)
         }))
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name("AgentKanban")
+                .build(),
+        )
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _, event| {
+                    if event.state == ShortcutState::Pressed {
+                        toggle_window(app);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let db = Database::open_default()?;
             let prefs: Preferences = db
@@ -269,13 +438,30 @@ fn run() -> tauri::Result<()> {
             } else {
                 window.center()?;
             }
+            let shortcut_enabled = prefs.shortcut_enabled;
             app.manage(AppState {
                 db,
                 preferences: Mutex::new(prefs),
+                preferences_save: Mutex::new(()),
+                desktop_errors: Mutex::new(DesktopErrors::default()),
                 geometry: Mutex::new(geometry),
                 geometry_save: Mutex::new(()),
                 geometry_dirty: AtomicBool::new(false),
             });
+
+            // Merely installing the autostart plugin preserves the OS setting.
+            // A conflicting hotkey is visible in Settings but must never prevent startup.
+            if shortcut_enabled {
+                if let Err(err) = app.global_shortcut().register(SHORTCUT) {
+                    let message = format!("无法注册快捷键 {SHORTCUT}，可能已被其他应用占用：{err}");
+                    eprintln!("{message}");
+                    app.state::<AppState>()
+                        .desktop_errors
+                        .lock()
+                        .map_err(error)?
+                        .shortcut = Some(message);
+                }
+            }
 
             let show = MenuItem::with_id(app, "show", "显示看板", true, None::<&str>)?;
             let hide = MenuItem::with_id(app, "hide", "隐藏看板", true, None::<&str>)?;
@@ -368,7 +554,12 @@ fn run() -> tauri::Result<()> {
             get_preferences,
             set_preferences,
             set_compact,
-            hide_window
+            hide_window,
+            get_desktop_settings,
+            set_autostart,
+            set_shortcut_enabled,
+            get_integration_info,
+            check_mcp
         ])
         .build(context)?;
     app.run(|app, event| {

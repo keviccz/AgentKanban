@@ -250,6 +250,32 @@ fn settings_persist_without_triggering_board_revision() {
 }
 
 #[test]
+fn latest_task_update_includes_archived_tasks_and_ignores_settings() {
+    let fixture = Fixture::new();
+    assert_eq!(fixture.db.last_task_update().unwrap(), None);
+    let created = fixture
+        .db
+        .upsert(fixture.input("latest", Status::Todo))
+        .unwrap();
+    assert_eq!(
+        fixture.db.last_task_update().unwrap(),
+        Some(created.updated_at)
+    );
+    let archived = fixture.db.archive(fixture.archive("latest", true)).unwrap();
+    assert!(fixture.db.board().unwrap().projects.is_empty());
+    assert_eq!(
+        fixture.db.last_task_update().unwrap(),
+        Some(archived.updated_at.clone())
+    );
+    fixture.db.set_setting("ui", r#"{"theme":"dark"}"#).unwrap();
+    let reopened = Database::open(fixture.db.path()).unwrap();
+    assert_eq!(
+        reopened.last_task_update().unwrap(),
+        Some(archived.updated_at)
+    );
+}
+
+#[test]
 fn invalid_input_cannot_create_partial_projects_or_tasks() {
     let fixture = Fixture::new();
     let mut input = fixture.input("bad", Status::Todo);
