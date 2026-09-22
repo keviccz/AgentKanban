@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AgentKanban",
+  "version": "0.1.0",
+  "identifier": "local.agentkanban.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{
+      "label": "main", "title": "AgentKanban", "width": 380, "height": 520,
+      "minWidth": 320, "minHeight": 360,
+      "decorations": false, "resizable": true, "alwaysOnTop": true,
+      "visible": false, "maximizable": false, "shadow": true
+    }],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "externalBin": ["binaries/agentkanban-mcp"],
+    "resources": {"../examples/": "examples/", "../docs/": "docs/", "../scripts/write-client-examples.ps1": "scripts/write-client-examples.ps1", "../README.md": "README.md"},
+    "shortDescription": "由 Agent 维护的本地桌面任务浮窗",
+    "windows": {
+      "nsis": {"installMode": "currentUser", "languages": ["SimpChinese", "English"], "displayLanguageSelector": false},
+      "webviewInstallMode": {"type": "downloadBootstrapper", "silent": true}
+    }
+  }
+}

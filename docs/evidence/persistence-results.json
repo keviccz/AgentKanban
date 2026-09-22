@@ -1,0 +1,55 @@
+{
+  "status": "PASS",
+  "checks": [
+    "saved dark theme and project/completed expansion survived an earlier restart",
+    "compact preference and height survived a fresh process restart",
+    "expanded dimensions and position restored"
+  ],
+  "before": {
+    "size": {
+      "width": 475,
+      "height": 653
+    },
+    "position": {
+      "x": 3532,
+      "y": 337
+    },
+    "scale": 1.25
+  },
+  "compact": {
+    "size": {
+      "width": 475,
+      "height": 61
+    },
+    "position": {
+      "x": 3532,
+      "y": 337
+    },
+    "scale": 1.25
+  },
+  "restored": {
+    "size": {
+      "width": 475,
+      "height": 652
+    },
+    "position": {
+      "x": 3532,
+      "y": 337
+    },
+    "scale": 1.25
+  },
+  "saved": {
+    "theme": "dark",
+    "always_on_top": true,
+    "compact": true,
+    "filter": "all",
+    "collapsed_projects": [],
+    "expanded_projects": [
+      2
+    ],
+    "completed_projects": [
+      2
+    ]
+  },
+  "restarted_pid": 28836
+}

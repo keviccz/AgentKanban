@@ -1,0 +1,90 @@
+AgentKanban v0.1 - Claude Code isolated connection check
+Recorded: 2026-09-22 Asia/Shanghai
+
+Result
+  Claude Code CLI availability: PASS, 2.1.278
+  Isolated project MCP configuration: PASS
+  Actual MCP connection: NOT_RUN (Claude reports Pending approval)
+  Real Agent create -> progress -> done flow: NOT_RUN
+  Model/API calls: none invoked; no claude -p command was run.
+  Cursor connection / Agent flow: NOT_RUN (cursor and cursor-agent not found on PATH).
+
+Isolation
+  CLI: C:\Users\AlexZ\.local\bin\claude.exe
+  CLAUDE_CONFIG_DIR:
+    C:\Users\AlexZ\AppData\Local\Temp\agentkanban-claude-check-1a21ea0ae1dd45af91f37310b013fac9\config
+  Working directory:
+    C:\Users\AlexZ\AppData\Local\Temp\agentkanban-claude-check-1a21ea0ae1dd45af91f37310b013fac9\work
+  AGENTKANBAN_DATA_DIR supplied in MCP configuration:
+    C:\Users\AlexZ\AppData\Local\Temp\agentkanban-claude-check-1a21ea0ae1dd45af91f37310b013fac9\data
+  Server executable:
+    E:\A_Projects\AgentKanban\target\debug\agentkanban-mcp.exe
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 was set for check commands.
+  All three directories were newly created for this check. No existing user
+  config or credentials were copied or edited by these commands. CLI-generated
+  .claude.json and backups were observed under the isolated config directory.
+  No database file was observed in the isolated data directory before project
+  registration; Pending approval did not establish an MCP connection.
+
+CLI flags checked from installed executable
+  claude --version
+    2.1.278 (Claude Code)
+  claude mcp add --help
+    --scope <scope> (local, user, or project)
+    --transport <transport> (stdio, sse, http)
+    --env <env...>
+  claude mcp list --help / claude mcp get --help
+    Unapproved .mcp.json servers are shown as Pending approval and not connected.
+  claude --help
+    --mcp-config loads JSON files/strings; --strict-mcp-config ignores other
+    MCP configurations for sessions.
+
+Attempts and actual observations
+  1. Proposed mcp add --scope user with CLAUDE_CONFIG_DIR and database isolated.
+     The execution tool's automatic approval policy rejected the entire command
+     before it ran. Returned reason: "blocked by policy"; no more specific
+     reason was supplied. It did not register a user-scope server.
+
+  2. Safer read-only, one-off configuration alternative:
+     claude --mcp-config <temporary check-mcp.json> --strict-mcp-config mcp list
+     Output:
+       No MCP servers configured. Use `claude mcp add` to add a server.
+       MCP_LIST_EXIT=0
+     Thus session-level --mcp-config does not provide this CLI subcommand's
+     health check with the proposed server; this was not a successful connection.
+
+  3. Safer project-scope registration confined to the new temporary work directory.
+     First flag order placed the server name immediately after variadic --env;
+     CLI returned "missing required argument 'commandOrUrl'" (exit 1).
+     Corrected command (all placeholders below are the exact isolated paths above):
+       claude mcp add --env AGENTKANBAN_DATA_DIR=<isolated-data>
+         --transport stdio --scope project agentkanban-local-check -- <server-exe>
+     Actual output:
+       Added stdio MCP server agentkanban-local-check with command:
+       E:\A_Projects\AgentKanban\target\debug\agentkanban-mcp.exe  to project config
+       File modified: C:\Users\AlexZ\AppData\Local\Temp\agentkanban-claude-check-1a21ea0ae1dd45af91f37310b013fac9\work\.mcp.json
+       MCP_ADD_PROJECT_EXIT=0
+
+  4. Actual claude mcp list output after project registration:
+       Checking MCP server health...
+       agentkanban-local-check: E:\A_Projects\AgentKanban\target\debug\agentkanban-mcp.exe
+         - Pending approval (run `claude` to approve)
+       MCP_LIST_EXIT=0
+
+  5. Actual claude mcp get agentkanban-local-check output:
+       Scope: Project config (shared via .mcp.json)
+       Status: Pending approval (run `claude` to approve)
+       Type: stdio
+       Command: E:\A_Projects\AgentKanban\target\debug\agentkanban-mcp.exe
+       Args:
+       Environment:
+         AGENTKANBAN_DATA_DIR=<isolated-data>
+       MCP_GET_EXIT=0
+
+The project approval was not bypassed or changed. Exit code 0 for list/get
+does not prove connection success: their explicit status remained Pending
+approval. Temporary files are retained to preserve the failure evidence.
+
+Documentation consulted
+  https://code.claude.com/docs/en/mcp
+  https://code.claude.com/docs/en/settings

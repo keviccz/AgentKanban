@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "agentkanban": {
+      "type": "stdio",
+      "command": "C:/Users/YOUR_NAME/AppData/Local/AgentKanban/agentkanban-mcp.exe",
+      "args": []
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "agentkanban",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host localhost --port 1420",
+    "tauri": "tauri",
+    "prepare:mcp": "pwsh -NoProfile -File scripts/prepare-mcp.ps1",
+    "desktop:dev": "npm run prepare:mcp && tauri dev",
+    "desktop:build": "pwsh -NoProfile -File scripts/build.ps1",
+    "verify:mcp": "node scripts/verify-mcp.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  }
+}

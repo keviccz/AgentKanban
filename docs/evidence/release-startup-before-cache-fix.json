@@ -1,0 +1,11 @@
+{
+  "status": "PASS_STARTUP_ONLY",
+  "executable": "E:\\A_Projects\\AgentKanban\\release\\AgentKanban\\agentkanban.exe",
+  "pid": 36612,
+  "title": "AgentKanban",
+  "responding": true,
+  "database_exists": true,
+  "webview_under_data_dir": false,
+  "stderr": null,
+  "limit": "Release process and window startup checked; release DOM and installer wizard not automated."
+}

@@ -1,0 +1,6 @@
+# Replace YOUR_NAME with your Windows user name, or generate this file with
+# scripts/write-client-examples.ps1 -Executable <absolute executable path>.
+# Merge this table into your Codex config.toml; do not replace the whole file.
+[mcp_servers.agentkanban]
+command = 'C:/Users/YOUR_NAME/AppData/Local/AgentKanban/agentkanban-mcp.exe'
+args = []

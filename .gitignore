@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+src-tauri/binaries/*.exe
+src-tauri/gen/
+release/
+.playwright-mcp/
+artifacts/
+*.log

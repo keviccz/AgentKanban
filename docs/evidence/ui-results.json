@@ -1,0 +1,73 @@
+{
+  "results": [
+    {
+      "check": "native data, default 3 tasks, completed collapsed, light theme",
+      "status": "PASS",
+      "native": {
+        "size": {
+          "width": 475,
+          "height": 653
+        },
+        "scale": 1.25,
+        "top": true,
+        "visible": true
+      }
+    },
+    {
+      "check": "dark theme",
+      "status": "PASS"
+    },
+    {
+      "check": "native always-on-top on and off",
+      "status": "PASS"
+    },
+    {
+      "check": "compact strip and expanded size restoration",
+      "status": "PASS",
+      "before": {
+        "size": {
+          "width": 475,
+          "height": 653
+        },
+        "scale": 1.25,
+        "top": true,
+        "visible": true
+      },
+      "compact": {
+        "size": {
+          "width": 475,
+          "height": 60
+        },
+        "scale": 1.25,
+        "top": true,
+        "visible": true
+      },
+      "after": {
+        "size": {
+          "width": 475,
+          "height": 652
+        },
+        "scale": 1.25,
+        "top": true,
+        "visible": true
+      }
+    },
+    {
+      "check": "filter, more/completed disclosure, update preserves collapsed project",
+      "status": "PASS"
+    },
+    {
+      "check": "hidden pauses DB polling, MCP independent write, single-instance restore refreshes immediately",
+      "status": "PASS"
+    },
+    {
+      "check": "long Chinese and unbroken titles, viewport 320/380/480, emulated scale 1/1.25/1.5",
+      "status": "PASS"
+    },
+    {
+      "check": "no WebView page errors",
+      "status": "PASS"
+    }
+  ],
+  "errors": []
+}

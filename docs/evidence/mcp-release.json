@@ -1,0 +1,74 @@
+{
+  "started_at": "2026-09-22T07:58:42.954Z",
+  "executable": "E:\\A_Projects\\AgentKanban\\target\\release\\agentkanban-mcp.exe",
+  "node": "v24.19.0",
+  "platform": "win32",
+  "fixture_root": "C:\\Users\\AlexZ\\AppData\\Local\\Temp\\agentkanban-mcp-check-EV0ZqU",
+  "data_dir": "C:\\Users\\AlexZ\\AppData\\Local\\Temp\\agentkanban-mcp-check-EV0ZqU\\data",
+  "protocol_version": "2025-11-25",
+  "results": [
+    {
+      "name": "initialize, initialized notification, ping, and exactly three tool schemas",
+      "status": "PASS",
+      "duration_ms": 135
+    },
+    {
+      "name": "create and idempotent update preserve identity and Unicode data",
+      "status": "PASS",
+      "duration_ms": 149
+    },
+    {
+      "name": "blocked, complete, reopen, and default unfinished filtering",
+      "status": "PASS",
+      "duration_ms": 240
+    },
+    {
+      "name": "archive and restore retain the same task",
+      "status": "PASS",
+      "duration_ms": 188
+    },
+    {
+      "name": "restart restores committed tasks without a running GUI",
+      "status": "PASS",
+      "duration_ms": 89
+    },
+    {
+      "name": "four MCP processes concurrently write 32 distinct tasks without loss",
+      "status": "PASS",
+      "duration_ms": 611
+    },
+    {
+      "name": "default page size 20, explicit pagination, and project filters",
+      "status": "PASS",
+      "duration_ms": 116
+    },
+    {
+      "name": "invalid inputs and unknown methods/tools return explicit errors",
+      "status": "PASS",
+      "duration_ms": 55
+    },
+    {
+      "name": "compatible 2024-11-05 protocol handshake",
+      "status": "PASS",
+      "duration_ms": 49
+    },
+    {
+      "name": "database write failure is returned to the initialized client",
+      "status": "PASS",
+      "duration_ms": 60
+    },
+    {
+      "name": "unavailable data directory produces an explicit failure",
+      "status": "PASS",
+      "duration_ms": 16
+    },
+    {
+      "name": "stdout remains protocol-only and notifications have no response",
+      "status": "PASS",
+      "duration_ms": 0
+    }
+  ],
+  "status": "PASS",
+  "finished_at": "2026-09-22T07:58:44.668Z",
+  "fixture_retained": false
+}

@@ -1,0 +1,20 @@
+{
+  "status": "PASS",
+  "added_projects": 5,
+  "added_tasks": 80,
+  "checks": [
+    "Each project previews exactly three unfinished tasks",
+    "Completed items remain collapsed",
+    "Content scrolls while titlebar and footer remain visible",
+    "No horizontal overflow"
+  ],
+  "layout": {
+    "scrollTop": 3231.199951171875,
+    "scrollHeight": 3598,
+    "height": 367,
+    "overflow": false,
+    "header": 0.800000011920929,
+    "footer": 522.3999938964844,
+    "windowHeight": 523
+  }
+}
