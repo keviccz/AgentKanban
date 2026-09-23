@@ -1,4 +1,7 @@
-:root { font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; color: #202630; background: #fff; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; --surface: #fff; --text: #202630; --muted: #6b7480; --line: #e6e9ed; --hover: #f2f5f7; --teal: #007f89; --amber: #a86400; --accent: #1674ad; --green: #3f7d60; --focus: #1685ba; }
+/* Bundled Latin fonts (SIL OFL, see src/fonts). CJK text falls through to Microsoft YaHei UI. */
+@font-face { font-family: "Manrope"; src: url("./fonts/manrope-latin-wght.woff2") format("woff2"); font-weight: 200 800; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Geist Mono"; src: url("./fonts/geist-mono-latin-wght.woff2") format("woff2"); font-weight: 100 900; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+:root { font-family: "Manrope", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; color: #202630; background: #fff; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; --surface: #fff; --text: #202630; --muted: #6b7480; --line: #e6e9ed; --hover: #f2f5f7; --teal: #007f89; --amber: #a86400; --accent: #1674ad; --green: #3f7d60; --focus: #1685ba; }
 :root[data-theme="dark"] { color-scheme: dark; color: #e8ebef; background: #202428; --surface: #202428; --text: #e8ebef; --muted: #abb4bf; --line: #363d45; --hover: #2b3239; --teal: #64d4d6; --amber: #f3b34e; --accent: #6ebbee; --green: #87c5a3; --focus: #6ebbee; }
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
@@ -124,6 +127,7 @@ select:focus-visible, input:focus-visible, summary:focus-visible, pre:focus-visi
 .panel dd time { white-space: normal; }
 .panel .diagnostics { font-size: 11px; margin: 10px 0 16px; }
 .config-code, .guidance { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.7; padding: 9px; border-radius: 5px; background: var(--hover); max-width: 100%; }
+code, pre, .mono { font-family: "Geist Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace; }
 .guidance { font-family: inherit; }
 details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding: 5px 0; }
 .version { margin-top: 16px; }

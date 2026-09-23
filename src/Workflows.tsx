@@ -130,7 +130,7 @@ export function TaskDetails({ task, project, preferences, now, draft, onDraftCha
       <section className="workflow-section"><h4>归档</h4><p className="hint">从看板隐藏这条任务，数据保留；Agent 可用 task_archive 恢复。</p>
         <div className="form-actions"><button className="outline-button" disabled={working || changed} onClick={() => void act('archive')}>{confirmArchive ? '确认归档' : '归档任务'}</button>{confirmArchive && <button className="text-button" disabled={working} onClick={() => setConfirmArchive(false)}>取消</button>}</div>
       </section>
-      <details className="task-identifiers"><summary>项目与任务信息</summary><dl><dt>项目</dt><dd>{project.name}</dd><dt>目录 <CopyButton text={project.path} /></dt><dd>{project.path}</dd><dt>任务标识 <CopyButton text={task.task_key} /></dt><dd>{task.task_key}</dd>{task.branch && <><dt>分支</dt><dd>{task.branch}</dd></>}<dt>最近变更</dt><dd>{new Date(task.updated_at).toLocaleString('zh-CN')}</dd></dl></details>
+      <details className="task-identifiers"><summary>项目与任务信息</summary><dl><dt>项目</dt><dd>{project.name}</dd><dt>目录 <CopyButton text={project.path} /></dt><dd className="mono">{project.path}</dd><dt>任务标识 <CopyButton text={task.task_key} /></dt><dd className="mono">{task.task_key}</dd>{task.branch && <><dt>分支</dt><dd>{task.branch}</dd></>}<dt>最近变更</dt><dd>{new Date(task.updated_at).toLocaleString('zh-CN')}</dd></dl></details>
     </div>
   </Panel>;
 }
