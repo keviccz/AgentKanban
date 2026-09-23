@@ -1,0 +1,63 @@
+{
+  "root": "C:\\Users\\AlexZ\\AppData\\Local\\Temp\\ak-pause-eval-1790176002279",
+  "results": [
+    {
+      "label": "A-paused-before",
+      "exit": 0,
+      "calls": [
+        {
+          "tool": "task_list",
+          "paused": true
+        }
+      ],
+      "testsRan": true,
+      "final": "已在 `calc.js` 导出 `divide(a, b)`，除数为 `0`（含 `-0`）时抛出错误。\n\n已补充正常除法、小数、负数、零被除数及除零测试。`npm test` 全部通过：3 项测试，0 失败。",
+      "usage": {
+        "input_tokens": 73539,
+        "cached_input_tokens": 66560,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 737,
+        "reasoning_output_tokens": 0
+      },
+      "tasks": [],
+      "workDone": true
+    },
+    {
+      "label": "B-paused-mid-session",
+      "exit": 0,
+      "calls": [
+        {
+          "tool": "task_list",
+          "paused": false
+        },
+        {
+          "tool": "task_upsert",
+          "paused": false
+        },
+        {
+          "tool": "task_upsert",
+          "paused": true
+        }
+      ],
+      "testsRan": true,
+      "final": "已完成 `divide(a, b)`，除数为 `0`（含 `-0`）时抛出错误。\n\n已补充正常除法和零除测试；`npm test` 全部通过（3/3），差异检查通过。",
+      "usage": {
+        "input_tokens": 112270,
+        "cached_input_tokens": 98432,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1026,
+        "reasoning_output_tokens": 0
+      },
+      "pausedAfterRevision": 1,
+      "finalRevision": 1,
+      "tasks": [
+        {
+          "task_key": "auto:add-divide",
+          "status": "in_progress",
+          "progress": "已确认现有实现和 node:test 测试结构，工作区无改动"
+        }
+      ],
+      "workDone": true
+    }
+  ]
+}

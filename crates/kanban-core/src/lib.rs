@@ -14,6 +14,8 @@ pub use project::{resolve_project, ProjectIdentity};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+const TRACKING_PAUSED: &str = "tracking_paused";
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Invalid input: {0}")]
@@ -966,6 +968,16 @@ impl Database {
             params![key, value]
         )?;
         Ok(())
+    }
+
+    /// Set from the desktop app and read by every MCP call, so it applies to
+    /// already-running Agent sessions without touching client configuration.
+    pub fn tracking_paused(&self) -> Result<bool> {
+        Ok(self.get_setting(TRACKING_PAUSED)?.as_deref() == Some("1"))
+    }
+
+    pub fn set_tracking_paused(&self, paused: bool) -> Result<()> {
+        self.set_setting(TRACKING_PAUSED, if paused { "1" } else { "0" })
     }
 }
 

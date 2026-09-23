@@ -290,3 +290,20 @@ fn live_mcp_can_take_over_captured_work_and_rediscover_a_human_rejection() {
     );
     client.close();
 }
+
+#[test]
+fn pause_from_another_process_reaches_a_running_server() {
+    let root = tempfile::tempdir().unwrap();
+    let data_dir = root.path().join("data");
+    let mut client = Client::launch(&data_dir);
+    let gui = Database::open(data_dir.join("agentkanban.sqlite3")).unwrap();
+    gui.set_tracking_paused(true).unwrap();
+    let paused = client.tool("task_upsert", args(root.path(), "paused", "todo"));
+    assert_eq!(paused["isError"], false);
+    assert_eq!(paused["structuredContent"]["paused"], true);
+    assert!(gui.board().unwrap().projects.is_empty());
+    gui.set_tracking_paused(false).unwrap();
+    let resumed = client.tool("task_upsert", args(root.path(), "resumed", "todo"));
+    assert!(resumed["structuredContent"]["id"].is_i64());
+    client.close();
+}

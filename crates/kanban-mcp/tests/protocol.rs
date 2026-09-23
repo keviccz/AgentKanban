@@ -461,3 +461,64 @@ fn v04_tool_descriptions_carry_tracking_rules_and_stay_small() {
         .contains("milestones"));
     assert!(tools.to_string().len() < 4300);
 }
+
+#[test]
+fn v04_pause_applies_to_running_sessions_without_writing_and_resumes() {
+    let (root, db) = fixture();
+    let mut server = Server::new(db.clone());
+    server.handle(initialize("2025-11-25"));
+    let args = json!({"project_path":root.path(),"task_key":"auto:pause","title":"暂停测试","status":"in_progress","progress":"开始"});
+    assert_eq!(
+        call(&mut server, 2, "task_upsert", args.clone())["isError"],
+        false
+    );
+    let revision = db.revision().unwrap();
+
+    // Paused from the GUI while this session is already initialized.
+    db.set_tracking_paused(true).unwrap();
+    for (id, name, arguments) in [
+        (3, "task_list", json!({"project_path":root.path()})),
+        (
+            4,
+            "task_upsert",
+            json!({"project_path":root.path(),"task_key":"auto:other","title":"不应写入","status":"todo","progress":""}),
+        ),
+        (
+            5,
+            "task_archive",
+            json!({"project_path":root.path(),"task_key":"auto:pause"}),
+        ),
+    ] {
+        let result = call(&mut server, id, name, arguments);
+        assert_eq!(result["isError"], false, "a pause is not a tool failure");
+        assert_eq!(result["structuredContent"]["paused"], true);
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Do not call"));
+    }
+    assert_eq!(db.revision().unwrap(), revision);
+    assert_eq!(db.board().unwrap().projects[0].tasks.len(), 1);
+    assert!(!db.board().unwrap().projects[0].tasks[0].archived);
+    // Unknown tools are still protocol errors while paused.
+    let unknown = server
+        .handle(request(
+            6,
+            "tools/call",
+            json!({"name":"task_delete","arguments":{}}),
+        ))
+        .unwrap();
+    assert_eq!(unknown["error"]["code"], -32602);
+
+    db.set_tracking_paused(false).unwrap();
+    let resumed = call(
+        &mut server,
+        7,
+        "task_list",
+        json!({"project_path":root.path()}),
+    );
+    assert_eq!(
+        resumed["structuredContent"]["items"][0]["task_key"],
+        "auto:pause"
+    );
+}

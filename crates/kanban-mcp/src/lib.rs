@@ -13,6 +13,7 @@ const MAX_LINE_BYTES: usize = 1024 * 1024;
 // Some clients (e.g. Codex CLI 0.156) do not show server instructions to the
 // model, so the tracking rules live in the tool descriptions; this only adds the rest.
 const INSTRUCTIONS: &str = "AgentKanban tracks file-modifying work automatically; the task_list and task_upsert descriptions say when. On Conflict, re-read with task_key before retrying. Keep board bookkeeping out of replies unless it fails.";
+const PAUSED_MESSAGE: &str = "The user paused AgentKanban tracking in the desktop app. Nothing was read or recorded. Do not call AgentKanban tools again in this session unless the user says tracking is back on; continue your task normally.";
 /// Default page for task_list over MCP; summaries keep the resume query cheap.
 const LIST_LIMIT: u64 = 5;
 
@@ -218,15 +219,18 @@ impl Server {
         if !call.arguments.is_object() {
             return Err((-32602, "arguments must be an object".into()));
         }
-        let result = match call.name.as_str() {
-            "task_upsert" => {
-                parse_and_run::<UpsertTask, _>(call.arguments, |input| self.db.upsert(input))
-            }
-            "task_list" => list_tasks(&self.db, call.arguments),
-            "task_archive" => {
-                parse_and_run::<ArchiveTask, _>(call.arguments, |input| self.db.archive(input))
-            }
-            _ => return Err((-32602, format!("Unknown tool: {}", call.name))),
+        if !matches!(
+            call.name.as_str(),
+            "task_upsert" | "task_list" | "task_archive"
+        ) {
+            return Err((-32602, format!("Unknown tool: {}", call.name)));
+        }
+        // A pause is the user's choice, not a failure: answer successfully so the
+        // Agent carries on with its work instead of retrying.
+        let result = match self.db.tracking_paused() {
+            Ok(true) => Ok(json!({"paused": true, "recorded": false, "message": PAUSED_MESSAGE})),
+            Ok(false) => self.run_tool(&call.name, call.arguments),
+            Err(error) => Err(error.to_string()),
         };
         Ok(match result {
             Ok(value) => {
@@ -239,6 +243,16 @@ impl Server {
             }
             Err(error) => json!({"content":[{"type":"text","text":error}],"isError":true}),
         })
+    }
+
+    fn run_tool(&self, name: &str, arguments: Value) -> std::result::Result<Value, String> {
+        match name {
+            "task_upsert" => {
+                parse_and_run::<UpsertTask, _>(arguments, |input| self.db.upsert(input))
+            }
+            "task_list" => list_tasks(&self.db, arguments),
+            _ => parse_and_run::<ArchiveTask, _>(arguments, |input| self.db.archive(input)),
+        }
     }
 }
 

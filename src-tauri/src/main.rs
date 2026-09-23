@@ -165,6 +165,17 @@ fn archive_task(state: State<AppState>, input: ArchiveById) -> Result<TaskReceip
 }
 
 #[tauri::command(async)]
+fn get_tracking_paused(state: State<AppState>) -> Result<bool, String> {
+    state.db.tracking_paused().map_err(error)
+}
+
+#[tauri::command(async)]
+fn set_tracking_paused(state: State<AppState>, paused: bool) -> Result<bool, String> {
+    state.db.set_tracking_paused(paused).map_err(error)?;
+    state.db.tracking_paused().map_err(error)
+}
+
+#[tauri::command(async)]
 fn get_handoff(state: State<AppState>, id: i64) -> Result<String, String> {
     if id <= 0 {
         return Err("任务标识无效".into());
@@ -660,6 +671,8 @@ fn run() -> tauri::Result<()> {
             review_task,
             send_task_feedback,
             archive_task,
+            get_tracking_paused,
+            set_tracking_paused,
             get_handoff,
             open_external_link,
             get_preferences,

@@ -91,6 +91,8 @@ claude mcp add --transport stdio --scope user agentkanban -- "$env:LOCALAPPDATA\
 | `steps` | Agent 的计划步骤，最多 12 项 `{title,status,note?}`，状态同任务四种状态；浮窗卡片显示完成数，详情显示完整清单 |
 | `review_withdrawn_at` | Agent 在用户验收前把 `done` 任务改回其他状态的时间；下次完成时清除，浮窗显示「已撤回验收」 |
 
+用户可在浮窗底栏暂停记录：此后三个工具都返回成功结果 `{"paused":true,"recorded":false,"message":...}`，不读取也不写入任何任务，并提示 Agent 本会话不再调用；恢复后立即照常工作。暂停标记保存在共用数据库的设置中，每次调用都会检查，对已运行的会话同样生效。
+
 用户可在浮窗任务详情中归档任务（二次确认，数据保留，不计为 Agent 更新）；浮窗不列出已归档任务，恢复由 Agent 调用 `task_archive(archived=false)`。
 
 新任务直接设为 `done`，或从其他状态转为 `done`，会进入 `pending`。在用户验收前 Agent 又把任务改为其他状态时，待验收被取消并记录 `review_withdrawn_at`。用户在浮窗中通过验收后成为 `accepted`；退回修改必须填写意见，任务变为 `todo` 与 `changes_requested`，重新进入默认未完成查询。Agent 继续执行时保留修改请求，下一次完成重新等待验收。已通过的完成任务被 Agent 实质修改后也需重新验收。

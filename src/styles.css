@@ -88,6 +88,12 @@ select:focus-visible, input:focus-visible, summary:focus-visible, pre:focus-visi
 .stale { font-size: 10px; font-weight: 400; color: var(--amber); white-space: nowrap; }
 .footer-settings { font-size: 11px; padding: 6px 0; color: var(--muted); }
 .footer-settings:hover { color: var(--accent); }
+.footer-pause { font-size: 11px; padding: 6px 0; color: var(--muted); }
+.footer-pause:hover { color: var(--accent); }
+.footer-pause.is-paused { color: var(--amber); font-weight: 600; }
+.paused-banner { display: flex; gap: 10px; align-items: center; justify-content: space-between; background: var(--hover); color: var(--amber); font-size: 11px; line-height: 18px; padding: 7px 16px; }
+.paused-banner button { flex-shrink: 0; color: var(--accent); text-decoration: underline; }
+.paused-chip { color: var(--amber); }
 .panel { width: calc(100% - 20px); max-width: 520px; height: calc(100% - 40px); max-height: 720px; padding: 0; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 10px 35px #0003; overflow: hidden; }
 .panel[open] { display: flex; flex-direction: column; }
 .panel::backdrop { background: #131b245c; }

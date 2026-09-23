@@ -6,12 +6,13 @@
 
 | 检查 | 结果与范围 |
 | --- | --- |
-| Rust 自动检查 | PASS：46 项（数据 25、MCP 13、桌面 8），含 schema 2→3 迁移、`steps` 省略保留与校验、撤回验收痕迹、浮窗归档不计 Agent 更新、摘要与完整记录两种查询、工具说明体积上限 |
+| Rust 自动检查 | PASS：48 项（数据 25、MCP 15、桌面 8），含 schema 2→3 迁移、`steps` 省略保留与校验、撤回验收痕迹、浮窗归档不计 Agent 更新、摘要与完整记录两种查询、工具说明体积上限 |
 | 并发启动 | 修复前 HEAD 在 9 次重复中失败 1 次，本地复现为 `Database error: database is locked`；加入 5 秒内的有界重试后连续 20 次 PASS |
 | 独立 MCP 进程 | PASS：debug 18/18、[release 18/18](evidence/v04/mcp-release.json)（默认分页改为 5 条并遍历全部页面） |
 | Windows 交付与接入 | PASS：0.4.0 NSIS 与免安装 ZIP 构建；静默安装到 `%LOCALAPPDATA%\AgentKanban`，GUI 启动并创建数据库；用户 Codex 配置接入后，真实会话只读调用 `task_list` 成功。安装向导界面、卸载未执行 |
 | 前端 | PASS：TypeScript 与 Vite 构建。桌面 WebView 与 Windows 现场交互本轮 NOT_RUN |
 | 真实 Codex 行为 | PASS：[结果](evidence/v04/agent-eval-results.json)、[多步骤任务记录](evidence/v04/codex-multi-with-board.jsonl)、[评测脚本](evidence/v04/agent-eval-run.mjs)。4 个编码任务各生成 1 条独立任务，每个都是 1 次 `task_list` + 3 次 `task_upsert`（开工含计划、一次阶段更新、完成），全部携带 `expected_updated_at`，无冲突、无重复任务；新会话的新功能新建任务而非覆盖旧任务；只读问题和明确「不用记」均 0 次调用；最终回复除「未记录到看板」一句外不提看板 |
+| 暂停记录 | PASS：协议与跨进程测试覆盖暂停后三个工具零写入、对已初始化会话生效、恢复后照常。[真实 Codex](evidence/v04/pause-eval-results.json)：会话前已暂停时仅 1 次 `task_list` 收到暂停回复，之后不再调用，任务正常完成，看板 0 条，总输入比未接看板基线约多 3.5k token；会话中途暂停时，下一次 `task_upsert` 收到暂停回复后不再调用，任务正常完成，看板停留在暂停前最后一次上报的「进行中」。另确认 Codex 支持 `mcp_servers.<name>.enabled=false`，但 AGENTS.md 规则仍在上下文中，未采用该方式 |
 | Codex 规则投递 | 实测 Codex CLI 0.156.1 向模型只提供 MCP 工具名：[服务器说明探测](evidence/v04/probe-instructions.jsonl)、[工具描述探测](evidence/v04/probe-description.jsonl)。仅靠 MCP 时 0 次入板；在 AGENTS.md 加一段规则（[片段](../examples/codex-AGENTS-snippet.md)，约 150 token）后生效 |
 
 Token 与上下文（Codex CLI 0.156.1，`gpt-6-astra` high，同一提示、临时项目，基线不接 MCP、不加规则；两组执行的命令与文件修改数相同）：
