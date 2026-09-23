@@ -11,7 +11,8 @@
     "prepare:mcp": "pwsh -NoProfile -File scripts/prepare-mcp.ps1",
     "desktop:dev": "npm run prepare:mcp && tauri dev",
     "desktop:build": "pwsh -NoProfile -File scripts/build.ps1",
-    "verify:mcp": "node scripts/verify-mcp.mjs"
+    "verify:mcp": "node scripts/verify-mcp.mjs",
+    "desktop:update": "pwsh -NoProfile -File scripts/update.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

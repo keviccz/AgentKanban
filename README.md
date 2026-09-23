@@ -80,6 +80,14 @@ npm run desktop:build
 
 该命令构建 release MCP 与桌面程序，并生成 Windows 安装包。Tauri 原始安装包位于 `target/release/bundle/nsis/`，整理后的交付文件位置以构建命令输出为准。运行安装包是单独动作，构建不会自动安装或修改客户端配置。
 
+更新本机已安装的版本（构建后覆盖安装到 `%LOCALAPPDATA%\AgentKanban`，数据保留）：
+
+```powershell
+npm run desktop:update
+```
+
+它会先构建，再关闭正在运行的浮窗、静默安装、核对安装的 MCP 版本与本次构建一致，并在浮窗原本开着时重新打开。加 `-SkipBuild` 直接安装 `release/` 中现有安装包（例如 `pwsh -NoProfile -File scripts/update.ps1 -SkipBuild`）。若有 Agent 会话正在使用 MCP，安装程序无法替换它，脚本会在改动前停止并列出进程；关闭这些会话，或加 `-StopMcp` 强制结束（这些会话的看板工具随之断开，需重开会话）。
+
 验证真实 MCP 进程：
 
 ```powershell
