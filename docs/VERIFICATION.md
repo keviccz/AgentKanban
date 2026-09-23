@@ -1,5 +1,30 @@
 # 验证与验收
 
+## v0.4 实测结果（2026-09-23）
+
+本轮把入板方式改为「会修改文件的任务自动记录」，新增计划步骤 `steps`、`task_list` 摘要模式（默认 5 条）、浮窗归档、「已撤回验收」痕迹、数据库命令异步化，并修复多个 MCP 进程同时首次打开数据库时偶发 `database is locked` 退出的问题。
+
+| 检查 | 结果与范围 |
+| --- | --- |
+| Rust 自动检查 | PASS：46 项（数据 25、MCP 13、桌面 8），含 schema 2→3 迁移、`steps` 省略保留与校验、撤回验收痕迹、浮窗归档不计 Agent 更新、摘要与完整记录两种查询、工具说明体积上限 |
+| 并发启动 | 修复前 HEAD 在 9 次重复中失败 1 次，本地复现为 `Database error: database is locked`；加入 5 秒内的有界重试后连续 20 次 PASS |
+| 独立 MCP 进程 | PASS：debug 18/18、[release 18/18](evidence/v04/mcp-release.json)（默认分页改为 5 条并遍历全部页面） |
+| Windows 交付与接入 | PASS：0.4.0 NSIS 与免安装 ZIP 构建；静默安装到 `%LOCALAPPDATA%\AgentKanban`，GUI 启动并创建数据库；用户 Codex 配置接入后，真实会话只读调用 `task_list` 成功。安装向导界面、卸载未执行 |
+| 前端 | PASS：TypeScript 与 Vite 构建。桌面 WebView 与 Windows 现场交互本轮 NOT_RUN |
+| 真实 Codex 行为 | PASS：[结果](evidence/v04/agent-eval-results.json)、[多步骤任务记录](evidence/v04/codex-multi-with-board.jsonl)、[评测脚本](evidence/v04/agent-eval-run.mjs)。4 个编码任务各生成 1 条独立任务，每个都是 1 次 `task_list` + 3 次 `task_upsert`（开工含计划、一次阶段更新、完成），全部携带 `expected_updated_at`，无冲突、无重复任务；新会话的新功能新建任务而非覆盖旧任务；只读问题和明确「不用记」均 0 次调用；最终回复除「未记录到看板」一句外不提看板 |
+| Codex 规则投递 | 实测 Codex CLI 0.156.1 向模型只提供 MCP 工具名：[服务器说明探测](evidence/v04/probe-instructions.jsonl)、[工具描述探测](evidence/v04/probe-description.jsonl)。仅靠 MCP 时 0 次入板；在 AGENTS.md 加一段规则（[片段](../examples/codex-AGENTS-snippet.md)，约 150 token）后生效 |
+
+Token 与上下文（Codex CLI 0.156.1，`gpt-6-astra` high，同一提示、临时项目，基线不接 MCP、不加规则；两组执行的命令与文件修改数相同）：
+
+| 场景 | 接入看板 输入 / 其中缓存 / 输出 | 基线 输入 / 其中缓存 / 输出 | 差值 |
+| --- | --- | --- | --- |
+| 小改动（2 次平均） | 113,304 / 102,336 / 1,207 | 70,072 / 56,896 / 692 | 输入 +43k（+62%，多为缓存命中），输出 +515 |
+| 多步骤工具 | 120,924 / 110,208 / 3,470 | 93,508 / 84,992 / 2,869 | 输入 +27k（+29%），输出 +601 |
+
+每个任务的看板调用参数与返回合计约 2.0–2.3k 字符（约 0.7–0.9k token），这是实际留在对话上下文里的部分。输入 token 增量主要来自 4 次工具调用各多一轮模型请求、重复读取已缓存的上下文，而不是看板内容本身。每次单样本存在网络与缓存波动，数值用于量级判断。
+
+仍未验证：Claude Code、Cursor 下的自动入板行为；更长任务中的更新频率；Windows 物理交互与安装包。
+
 ## v0.3 实测结果（2026-09-22）
 
 本轮补齐文字新建、`Ctrl+Alt+N`、开工说明、Agent 接手信息、下一步、所需输入、交付物、用户补充与人工验收。四种任务状态不变，新增独立验收状态；语音与自动派发未实现。

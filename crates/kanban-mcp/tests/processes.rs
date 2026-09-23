@@ -57,10 +57,11 @@ impl Client {
         writeln!(input, "{request}").unwrap();
         input.flush().unwrap();
         let mut line = String::new();
-        assert!(
-            self.output.read_line(&mut line).unwrap() > 0,
-            "server closed stdout before replying"
-        );
+        if self.output.read_line(&mut line).unwrap() == 0 {
+            let mut stderr = String::new();
+            std::io::Read::read_to_string(self.child.stderr.as_mut().unwrap(), &mut stderr).ok();
+            panic!("server closed stdout before replying: {stderr}");
+        }
         let response: Value =
             serde_json::from_str(&line).expect("stdout must contain only JSON-RPC");
         assert_eq!(response["id"], id);

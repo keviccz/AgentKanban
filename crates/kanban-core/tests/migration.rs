@@ -39,7 +39,7 @@ fn v1_migration_preserves_tasks_settings_and_legacy_done_review_boundary() {
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        2
+        3
     );
     assert_eq!(db.revision().unwrap(), 17);
     assert_eq!(
@@ -99,6 +99,7 @@ fn v1_migration_preserves_tasks_settings_and_legacy_done_review_boundary() {
         next_action: None,
         needs_input: None,
         deliverables: None,
+        steps: None,
         expected_updated_at: Some(legacy.updated_at.clone()),
     };
     let receipt = db.upsert(input).unwrap();

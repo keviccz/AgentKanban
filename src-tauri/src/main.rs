@@ -4,7 +4,9 @@ mod integration;
 mod preferences;
 mod task_actions;
 
-use kanban_core::{BoardSnapshot, CaptureTask, Database, FeedbackTask, ReviewTask, TaskReceipt};
+use kanban_core::{
+    ArchiveById, BoardSnapshot, CaptureTask, Database, FeedbackTask, ReviewTask, TaskReceipt,
+};
 use preferences::Preferences;
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -132,12 +134,12 @@ fn show_quick_create(app: &tauri::AppHandle) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_snapshot(state: State<AppState>) -> Result<BoardSnapshot, String> {
     state.db.board().map_err(error)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_revision(state: State<AppState>) -> Result<i64, String> {
     state.db.revision().map_err(error)
 }
@@ -155,6 +157,11 @@ fn review_task(state: State<AppState>, input: ReviewTask) -> Result<TaskReceipt,
 #[tauri::command(async)]
 fn send_task_feedback(state: State<AppState>, input: FeedbackTask) -> Result<TaskReceipt, String> {
     state.db.feedback(input).map_err(error)
+}
+
+#[tauri::command(async)]
+fn archive_task(state: State<AppState>, input: ArchiveById) -> Result<TaskReceipt, String> {
+    state.db.archive_by_id(input).map_err(error)
 }
 
 #[tauri::command(async)]
@@ -185,7 +192,7 @@ fn get_preferences(state: State<AppState>) -> Result<Preferences, String> {
     Ok(state.preferences.lock().map_err(error)?.clone())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_preferences(
     window: WebviewWindow,
     state: State<AppState>,
@@ -275,7 +282,7 @@ fn set_compact(
     Ok(next)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn hide_window(window: WebviewWindow, state: State<AppState>) -> Result<(), String> {
     save_geometry(&state)?;
     window.emit("visibility-changed", false).map_err(error)?;
@@ -652,6 +659,7 @@ fn run() -> tauri::Result<()> {
             create_task,
             review_task,
             send_task_feedback,
+            archive_task,
             get_handoff,
             open_external_link,
             get_preferences,

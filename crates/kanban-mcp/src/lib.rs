@@ -1,14 +1,20 @@
 //! Small newline-delimited JSON-RPC implementation of the local MCP surface.
 
-use kanban_core::{ArchiveTask, Database, ListTasks, UpsertTask};
-use serde::Deserialize;
+use kanban_core::{
+    ArchiveTask, Database, ListTasks, ListedTask, ReviewStatus, Status, StepStatus, UpsertTask,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
 const PROTOCOL_VERSION: &str = "2025-11-25";
 const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_LINE_BYTES: usize = 1024 * 1024;
-const INSTRUCTIONS: &str = "Track explicitly requested work only. Before taking over or resuming, task_list by project_path + the original task_key (include_done if needed), read request/user_note, then reuse that key and current updated_at as expected_updated_at. Re-read on Conflict. Update meaningful progress, next_action, needs_input and deliverables; clear obsolete needs_input explicitly. done submits new work for human review, not acceptance; rejected work reappears as todo/changes_requested. Never claim human acceptance or alter request/user_note. Do not log chats/commands. agent_updated_at is the last Agent report, not a live signal.";
+// Some clients (e.g. Codex CLI 0.156) do not show server instructions to the
+// model, so the tracking rules live in the tool descriptions; this only adds the rest.
+const INSTRUCTIONS: &str = "AgentKanban tracks file-modifying work automatically; the task_list and task_upsert descriptions say when. On Conflict, re-read with task_key before retrying. Keep board bookkeeping out of replies unless it fails.";
+/// Default page for task_list over MCP; summaries keep the resume query cheap.
+const LIST_LIMIT: u64 = 5;
 
 pub fn serve(db: Database, mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
     let mut server = Server::new(db);
@@ -216,9 +222,7 @@ impl Server {
             "task_upsert" => {
                 parse_and_run::<UpsertTask, _>(call.arguments, |input| self.db.upsert(input))
             }
-            "task_list" => {
-                parse_and_run::<ListTasks, _>(call.arguments, |input| self.db.list(input))
-            }
+            "task_list" => list_tasks(&self.db, call.arguments),
             "task_archive" => {
                 parse_and_run::<ArchiveTask, _>(call.arguments, |input| self.db.archive(input))
             }
@@ -248,31 +252,105 @@ fn parse_and_run<T: serde::de::DeserializeOwned, R: serde::Serialize>(
     serde_json::to_value(result).map_err(|error| format!("Cannot serialize result: {error}"))
 }
 
+/// One line per task for discovery. Full records (request, user_note, steps,
+/// deliverables) come back only for an exact task_key or detail=true.
+#[derive(Serialize)]
+struct TaskSummary<'a> {
+    id: i64,
+    task_key: &'a str,
+    title: &'a str,
+    status: Status,
+    progress: &'a str,
+    branch: &'a Option<String>,
+    archived: bool,
+    review_status: ReviewStatus,
+    updated_at: &'a str,
+    project_path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    steps: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    has_user_note: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    needs_input: bool,
+}
+
+impl<'a> From<&'a ListedTask> for TaskSummary<'a> {
+    fn from(listed: &'a ListedTask) -> Self {
+        let task = &listed.task;
+        let done = task
+            .steps
+            .iter()
+            .filter(|step| step.status == StepStatus::Done)
+            .count();
+        Self {
+            id: task.id,
+            task_key: &task.task_key,
+            title: &task.title,
+            status: task.status,
+            progress: &task.progress,
+            branch: &task.branch,
+            archived: task.archived,
+            review_status: task.review_status,
+            updated_at: &task.updated_at,
+            project_path: &listed.project_path,
+            steps: (!task.steps.is_empty()).then(|| format!("{done}/{}", task.steps.len())),
+            has_user_note: !task.user_note.is_empty(),
+            needs_input: !task.needs_input.is_empty(),
+        }
+    }
+}
+
+fn list_tasks(db: &Database, mut arguments: Value) -> std::result::Result<Value, String> {
+    let object = arguments
+        .as_object_mut()
+        .ok_or("Invalid tool arguments: expected an object")?;
+    let detail = match object.remove("detail") {
+        None | Some(Value::Null) => None,
+        Some(Value::Bool(detail)) => Some(detail),
+        Some(_) => return Err("Invalid tool arguments: detail must be a boolean".into()),
+    };
+    object.entry("limit").or_insert(json!(LIST_LIMIT));
+    let input: ListTasks = serde_json::from_value(arguments)
+        .map_err(|error| format!("Invalid tool arguments: {error}"))?;
+    let detail = detail.unwrap_or(input.task_key.is_some());
+    let page = db.list(input).map_err(|error| error.to_string())?;
+    let result = if detail {
+        serde_json::to_value(&page)
+    } else {
+        let items: Vec<TaskSummary> = page.items.iter().map(TaskSummary::from).collect();
+        serde_json::to_value(json!({"items": items, "next_offset": page.next_offset}))
+    };
+    result.map_err(|error| format!("Cannot serialize result: {error}"))
+}
+
 fn rpc_error(id: Value, code: i32, message: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
 }
 
 pub fn tool_definitions() -> Vec<Value> {
-    let project_path = json!({"type":"string","minLength":1,"description":"Absolute existing project directory. Git worktrees share their repository."});
-    let task_key = json!({"type":"string","minLength":1,"maxLength":160,"description":"Stable feature key reused across sessions."});
+    let project_path =
+        json!({"type":"string","minLength":1,"description":"Absolute project directory."});
+    let task_key = json!({"type":"string","minLength":1,"maxLength":160});
     let status = json!({"type":"string","enum":["todo","in_progress","blocked","done"]});
-    let expected = json!({"type":"string","minLength":1,"maxLength":64,"description":"Latest updated_at from task_list. Conflict requires re-reading before retry."});
+    let expected = json!({"type":"string","minLength":1,"maxLength":64,"description":"updated_at from your last read or receipt."});
+    let text = |max: u32, description: &str| json!({"type":"string","maxLength":max,"description":description});
     vec![
         json!({
             "name":"task_upsert",
-            "description":"Create or update tracked work using its original key. title/status/progress replace; omitted/null branch clears. New Agent fields are optional patches; omission preserves. done awaits human review. Restore archived tasks first. Returns id/status/updated_at.",
+            "description":"Create or update a tracked task by project_path+task_key. Create with a plan in steps. Afterwards update only at milestones (a step finished, a real blocker, done), never per edit or command or with unchanged state. Pass the last receipt's updated_at as expected_updated_at. done = awaiting human review. title/status/progress replace; omitted/null branch clears; agent/next_action/needs_input/deliverables/steps: omit keeps, send replaces. Single-line text.",
             "inputSchema":{
                 "type":"object","additionalProperties":false,
                 "properties":{
                     "project_path":project_path,"task_key":task_key,
                     "title":{"type":"string","minLength":1,"maxLength":200},
                     "status":status,
-                    "progress":{"type":"string","maxLength":600,"description":"One short line about meaningful progress or the blocker."},
+                    "progress":text(600, "One-line summary of the latest milestone or blocker."),
                     "branch":{"type":["string","null"],"minLength":1,"maxLength":200},
-                    "agent":{"type":["string","null"],"maxLength":100,"description":"Agent attribution. Omitted/null preserves; empty string clears."},
-                    "next_action":{"type":"string","maxLength":600,"description":"Next concrete step; empty string clears."},
-                    "needs_input":{"type":"string","maxLength":600,"description":"User input needed; empty string clears. Not cleared automatically on status changes."},
-                    "deliverables":{"type":"array","maxItems":5,"description":"Replace delivery references; [] clears. Paths or http(s) URLs are stored, never opened by this tool.","items":{"type":"object","additionalProperties":false,"properties":{"label":{"type":"string","minLength":1,"maxLength":100},"uri":{"type":"string","minLength":1,"maxLength":1000}},"required":["label","uri"]}},
+                    "agent":{"type":["string","null"],"maxLength":100},
+                    "next_action":text(600, "Next step."),
+                    "needs_input":text(600, "What the user must provide."),
+                    "deliverables":{"type":"array","maxItems":5,"items":{"type":"object","additionalProperties":false,"properties":{"label":{"type":"string","minLength":1,"maxLength":100},"uri":{"type":"string","minLength":1,"maxLength":1000,"description":"File path or http(s) URL."}},"required":["label","uri"]}},
+                    "steps":{"type":"array","maxItems":12,"description":"Whole plan; resend all steps when one changes.","items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","minLength":1,"maxLength":120},"status":status,"note":{"type":"string","maxLength":200}},"required":["title","status"]}},
                     "expected_updated_at":expected
                 },
                 "required":["project_path","task_key","title","status","progress"]
@@ -281,14 +359,15 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name":"task_list",
-            "description":"Read current work, original request, user feedback, delivery and review fields before updating. Optional exact task_key filter. Defaults to 20 unfinished/unarchived items; done tasks still require include_done or status=done. Follow next_offset for more.",
+            "description":"The user's task board. Tracking is automatic: at the start of any task that will modify files (code, config, docs), call this with project_path without being asked; skip Q&A, read-only work, or when the user says not to track. Reuse a matching task_key, else create auto:<short-slug> with task_upsert. Returns 5 unfinished one-line summaries per page (follow next_offset); an exact task_key or detail=true returns full records.",
             "inputSchema":{
                 "type":"object","additionalProperties":false,
                 "properties":{
                     "project_path":project_path,"task_key":task_key,"status":status,
                     "include_done":{"type":"boolean","default":false},
                     "include_archived":{"type":"boolean","default":false},
-                    "limit":{"type":"integer","minimum":1,"maximum":100,"default":20},
+                    "detail":{"type":"boolean"},
+                    "limit":{"type":"integer","minimum":1,"maximum":100,"default":LIST_LIMIT},
                     "offset":{"type":"integer","minimum":0,"maximum":4294967295_u64,"default":0}
                 }
             },
@@ -296,7 +375,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name":"task_archive",
-            "description":"Hide a task without deleting data, or restore with archived=false. Returns only id, status, updated_at.",
+            "description":"Hide a task without deleting it, or restore with archived=false.",
             "inputSchema":{
                 "type":"object","additionalProperties":false,
                 "properties":{"project_path":project_path,"task_key":task_key,"archived":{"type":"boolean","default":true},"expected_updated_at":expected},

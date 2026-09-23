@@ -1,6 +1,6 @@
 [package]
 name = "agentkanban"
-version = "0.3.0"
+version = "0.4.0"
 description = "A local desktop task board maintained by coding agents"
 edition = "2021"
 default-run = "agentkanban"

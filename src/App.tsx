@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { compactWindow, hideWindow, native, onError, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, savePreferences } from './bridge';
 import { defaults, labels, type CaptureInput, type Filter, type Preferences, type Project, type Snapshot, type Task, type TaskReceipt } from './types';
-import { awaitsReview, inActiveList, isStale, matchesFilter, relativeTime, reviewLabels } from './display';
+import { awaitsReview, inActiveList, isStale, matchesFilter, relativeTime, reviewLabels, stepProgress } from './display';
 import { Settings } from './Panels';
 import { CapturePanel, TaskDetails, type FeedbackDraft } from './Workflows';
 
@@ -24,11 +24,12 @@ function Icon({ name, className = '' }: { name: IconName; className?: string }) 
 
 const TaskRow = memo(function TaskRow({ task, now, staleHours, onOpen }: { task: Task; now: number; staleHours: number; onOpen: (id: number) => void }) {
   const timestamp = task.agent_updated_at ?? task.updated_at;
+  const steps = stepProgress(task);
   return <li className={`task task-${task.status} ${awaitsReview(task) ? 'task-review' : ''}`}>
     <button className="task-open" aria-label={`查看任务：${task.title}`} onClick={() => onOpen(task.id)}>
       <span className="task-heading"><span className="task-title" title={task.title}>{task.title}</span><span className={`status ${task.status}`}><span className="status-dot" />{labels[task.status]}</span></span>
       <span className="progress" title={task.progress}>{task.progress || '尚未补充进展'}</span>
-      {(task.agent || task.review_status !== 'none' || task.needs_input) && <span className="task-signals">{task.review_status !== 'none' && <span className={`review-badge ${task.review_status}`}>{reviewLabels[task.review_status]}</span>}{task.needs_input && <span className="input-signal">需要你补充</span>}{task.agent && <span className="agent-name" title={`最后上报：${task.agent}`}>{task.agent}</span>}</span>}
+      {(task.agent || task.review_status !== 'none' || task.needs_input || steps || task.review_withdrawn_at) && <span className="task-signals">{steps && <span className="step-count" title="计划步骤完成数">{steps} 步</span>}{task.review_withdrawn_at && <span className="review-badge withdrawn" title="Agent 在你验收前重新打开了任务">已撤回验收</span>}{task.review_status !== 'none' && <span className={`review-badge ${task.review_status}`}>{reviewLabels[task.review_status]}</span>}{task.needs_input && <span className="input-signal">需要你补充</span>}{task.agent && <span className="agent-name" title={`最后上报：${task.agent}`}>{task.agent}</span>}</span>}
       <span className="task-meta">{task.branch ? <span className="branch" title={task.branch}><Icon name="branch" /><span>{task.branch}</span></span> : <span>{!task.agent_updated_at ? '等待 Agent 接手' : ''}</span>}<span className="update-time">{isStale(task, staleHours, now) && <span className="stale" title="已超过设置的时间未收到更新；任务状态保持不变。">较久未更新</span>}<time dateTime={timestamp} title={`${task.agent_updated_at ? 'Agent 最后上报' : '记录时间'}：${new Date(timestamp).toLocaleString('zh-CN')}`}>{relativeTime(timestamp, now)}</time></span></span>
     </button>
   </li>;

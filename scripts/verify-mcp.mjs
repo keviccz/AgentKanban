@@ -263,7 +263,7 @@ try {
     assert.deepEqual([...upsertSchema.required].sort(), ['progress', 'project_path', 'status', 'task_key', 'title']);
     assert.deepEqual([...upsertSchema.properties.status.enum].sort(), ['blocked', 'done', 'in_progress', 'todo']);
     const listSchema = tools.find((tool) => tool.name === 'task_list').inputSchema;
-    assert.equal(listSchema.properties.limit.default, 20);
+    assert.equal(listSchema.properties.limit.default, 5);
     assert.equal(listSchema.properties.limit.maximum, 100);
   });
 
@@ -350,14 +350,18 @@ try {
     assert.equal(new Set(all.items.map((item) => item.task_key)).size, 32);
   });
 
-  await check('default page size 20, explicit pagination, and project filters', async () => {
+  await check('default page size 5, explicit pagination, and project filters', async () => {
     const first = await client.call('task_list', { project_path: concurrentProject });
-    assert.equal(first.items.length, 20);
-    assert.equal(first.next_offset, 20);
-    const second = await client.call('task_list', { project_path: concurrentProject, offset: first.next_offset });
-    assert.equal(second.items.length, 12);
-    assert.equal(second.next_offset, null);
-    assert.equal(new Set([...first.items, ...second.items].map((item) => item.id)).size, 32);
+    assert.equal(first.items.length, 5);
+    assert.equal(first.next_offset, 5);
+    const seen = [...first.items];
+    for (let offset = first.next_offset; offset !== null;) {
+      const page = await client.call('task_list', { project_path: concurrentProject, offset });
+      seen.push(...page.items);
+      offset = page.next_offset;
+    }
+    assert.equal(seen.length, 32);
+    assert.equal(new Set(seen.map((item) => item.id)).size, 32);
     const bounded = await client.call('task_list', { project_path: concurrentProject, limit: 7 });
     assert.equal(bounded.items.length, 7);
     assert.equal(bounded.next_offset, 7);

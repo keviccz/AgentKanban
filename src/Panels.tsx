@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'rea
 import { checkMcp, native, readDesktopSettings, readIntegrationInfo, setAutostart, setShortcut } from './bridge';
 import { type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences } from './types';
 import guidance from '../docs/AGENT_RULES.md?raw';
+import codexRule from '../examples/codex-AGENTS-snippet.md?raw';
 
 export function Panel({ title, children, onClose, initialFocus, busy = false }: { title: string; children: ReactNode; onClose: () => void; initialFocus?: RefObject<HTMLInputElement | null>; busy?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -100,11 +101,12 @@ export function Settings({ preferences, busy, saveError, update, onShortcutChang
         </section>
         <section className="settings-section"><h3>接入客户端</h3>
           <label className="setting-row"><span>客户端</span><select aria-label="客户端" value={client} onChange={event => setClient(event.target.value as typeof client)}><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="cursor">Cursor</option></select></label>
-          <p className="hint">{client === 'codex' ? '合并到 ~/.codex/config.toml' : client === 'claude' ? '合并到项目根目录的 .mcp.json' : '合并到 ~/.cursor/mcp.json'}，保留已有配置，然后重载客户端并允许此 MCP。</p>
+          <p className="hint">{client === 'codex' ? '合并到 ~/.codex/config.toml，保留已有配置' : client === 'claude' ? '推荐用 claude mcp add --scope user 添加（见 MCP 接入说明）；仅当前项目使用时，合并到项目根目录的 .mcp.json' : '合并到 ~/.cursor/mcp.json，保留已有配置'}，然后重载客户端并允许此 MCP。</p>
           {info && <><pre className="config-code" tabIndex={0}>{info.configs[client]}</pre><CopyButton text={info.configs[client]} label="复制接入配置" /></>}
-          <p className="hint">连接后告诉 Agent：「查询当前项目的看板任务。」确认三个工具可用，再记录真实工作。</p>
+          {client === 'codex' && <><p className="hint">Codex 会延迟加载 MCP 工具说明，模型看不到自动记录规则。请把下面一段加入 ~/.codex/AGENTS.md（约 150 token）。</p><CopyButton text={codexRule} label="复制 AGENTS.md 规则" /></>}
+          <p className="hint">连接后告诉 Agent：「查询当前项目的看板任务。」确认三个工具可用；之后正常布置编码任务即可自动记录。</p>
         </section>
-        <section className="settings-section"><div className="section-heading"><h3>让进展持续同步</h3><CopyButton text={guidance} label="复制同步规则" /></div><p className="hint">将规则交给 Agent，或放入项目的 Agent 指令。只有明确要求入板的任务才会记录。</p><details><summary>查看同步规则</summary><pre className="guidance">{guidance}</pre></details></section>
+        <section className="settings-section"><div className="section-heading"><h3>让进展持续同步</h3><CopyButton text={guidance} label="复制同步规则" /></div><p className="hint">MCP 已向 Agent 提供这些规则：会修改文件的任务自动入板，普通问答不记，对 Agent 说「不用记」即可跳过。客户端未采用 MCP 说明时，再把规则放入 Agent 指令。</p><details><summary>查看同步规则</summary><pre className="guidance">{guidance}</pre></details></section>
         {info && <p className="hint version">AgentKanban {info.app_version} · 本机保存</p>}
       </>}
     </div>

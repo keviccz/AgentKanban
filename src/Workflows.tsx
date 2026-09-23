@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { createTask, native, openExternalLink, readHandoff, reviewTask, sendFeedback } from './bridge';
-import { awaitsReview, isStale, relativeTime, reviewLabels } from './display';
+import { archiveTask, createTask, native, openExternalLink, readHandoff, reviewTask, sendFeedback } from './bridge';
+import { awaitsReview, isStale, relativeTime, reviewLabels, stepProgress } from './display';
 import { CopyButton, Panel } from './Panels';
 import { labels, type CaptureInput, type Preferences, type Project, type Task, type TaskReceipt } from './types';
 
@@ -63,9 +63,11 @@ export function TaskDetails({ task, project, preferences, now, draft, onDraftCha
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const inFlight = useRef(false);
   const changed = task.updated_at !== reviewVersion;
   const pending = awaitsReview(task);
+  const steps = stepProgress(task);
   useEffect(() => {
     let disposed = false;
     setHandoff(''); setHandoffError('');
@@ -73,11 +75,19 @@ export function TaskDetails({ task, project, preferences, now, draft, onDraftCha
     return () => { disposed = true; };
   }, [task.id, task.updated_at, handoffAttempt]);
 
-  async function act(action: 'feedback' | 'accept' | 'reject') {
+  async function act(action: 'feedback' | 'accept' | 'reject' | 'archive') {
     if (inFlight.current || changed) return;
     if (action === 'reject' && !note.trim()) { setError('请写下需要修改的内容，再退回任务。'); return; }
+    if (action === 'archive' && !confirmArchive) { setConfirmArchive(true); return; }
     inFlight.current = true; setWorking(true); onBusyChange(true); setError(''); setMessage('');
     try {
+      if (action === 'archive') {
+        // The board hides archived tasks, so the panel closes once the refresh drops it.
+        await archiveTask(task.id, reviewVersion);
+        onDraftChange(null);
+        await onChanged();
+        return;
+      }
       const receipt = action === 'feedback'
         ? await sendFeedback(task.id, reviewVersion, note)
         : await reviewTask(task.id, reviewVersion, action === 'accept', note);
@@ -86,7 +96,7 @@ export function TaskDetails({ task, project, preferences, now, draft, onDraftCha
       setMessage(action === 'feedback' ? '补充已保存。把最新开工说明交给 Agent 后继续。' : action === 'accept' ? '已验收通过。' : '已退回待办，修改要求会随任务交给 Agent。');
       await onChanged();
     } catch (e) { setError(String(e)); await onChanged(); }
-    finally { inFlight.current = false; setWorking(false); onBusyChange(false); }
+    finally { inFlight.current = false; setWorking(false); onBusyChange(false); setConfirmArchive(false); }
   }
 
   return <Panel title="任务详情" onClose={onClose} busy={working}>
@@ -96,6 +106,8 @@ export function TaskDetails({ task, project, preferences, now, draft, onDraftCha
       <div className="agent-attribution"><span>{task.agent ? `${task.agent} · 最后上报` : task.agent_updated_at ? 'Agent 最后上报' : '已记录 · 等待 Agent 接手'}</span><time dateTime={task.agent_updated_at ?? task.updated_at} title={new Date(task.agent_updated_at ?? task.updated_at).toLocaleString('zh-CN')}>{relativeTime(task.agent_updated_at ?? task.updated_at, now)}</time></div>
       {handoff && <div className="handoff-toolbar"><CopyButton text={handoff} label="复制开工说明" /></div>}
       {isStale(task, preferences.stale_after_hours, now) && <p className="hint stale">较久未收到 Agent 更新，当前状态保留。</p>}
+      {task.review_withdrawn_at && <p className="hint withdrawn-notice">Agent 在你验收前重新打开了任务（{new Date(task.review_withdrawn_at).toLocaleString('zh-CN')}），下次完成后会重新等待验收。</p>}
+      {task.steps.length > 0 && <section className="workflow-section"><h4>计划步骤 <span className="optional">{steps}</span></h4><ol className="steps">{task.steps.map((step, index) => <li key={`${index}-${step.title}`} className={`step step-${step.status}`}><span className={`status ${step.status}`}><span className="status-dot" />{labels[step.status]}</span><span className="step-title">{step.title}</span>{step.note && <span className="step-note">{step.note}</span>}</li>)}</ol></section>}
       {task.next_action && <section className="workflow-section"><h4>下一步</h4><p>{task.next_action}</p></section>}
       {task.needs_input && <section className="workflow-section needs-input"><h4>需要你补充</h4><p>{task.needs_input}</p></section>}
       {task.request && <section className="workflow-section"><h4>原始需求</h4><p>{task.request}</p></section>}
@@ -114,6 +126,9 @@ export function TaskDetails({ task, project, preferences, now, draft, onDraftCha
       <section className="workflow-section"><h4>交给 Agent 继续</h4><p className="hint">将开工说明复制到已接入看板的 Agent 会话，它会查询并更新同一条任务。这里不会自动启动 Agent。</p>
         {handoffError && <p className="panel-error" role="alert">{handoffError} <button className="text-button" onClick={() => setHandoffAttempt(attempt => attempt + 1)}>重试</button></p>}
         {handoff && <details><summary>查看开工说明</summary><pre className="guidance" tabIndex={0}>{handoff}</pre></details>}
+      </section>
+      <section className="workflow-section"><h4>归档</h4><p className="hint">从看板隐藏这条任务，数据保留；Agent 可用 task_archive 恢复。</p>
+        <div className="form-actions"><button className="outline-button" disabled={working || changed} onClick={() => void act('archive')}>{confirmArchive ? '确认归档' : '归档任务'}</button>{confirmArchive && <button className="text-button" disabled={working} onClick={() => setConfirmArchive(false)}>取消</button>}</div>
       </section>
       <details className="task-identifiers"><summary>项目与任务信息</summary><dl><dt>项目</dt><dd>{project.name}</dd><dt>目录 <CopyButton text={project.path} /></dt><dd>{project.path}</dd><dt>任务标识 <CopyButton text={task.task_key} /></dt><dd>{task.task_key}</dd>{task.branch && <><dt>分支</dt><dd>{task.branch}</dd></>}<dt>最近变更</dt><dd>{new Date(task.updated_at).toLocaleString('zh-CN')}</dd></dl></details>
     </div>

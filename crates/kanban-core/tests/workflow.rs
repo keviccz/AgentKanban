@@ -1,6 +1,6 @@
 use kanban_core::{
-    ArchiveTask, CaptureTask, Database, Deliverable, Error, FeedbackTask, ListTasks, ReviewStatus,
-    ReviewTask, Status, Task, UpsertTask,
+    ArchiveById, ArchiveTask, CaptureTask, Database, Deliverable, Error, FeedbackTask, ListTasks,
+    ReviewStatus, ReviewTask, Status, Step, StepStatus, Task, UpsertTask,
 };
 use std::sync::{Arc, Barrier};
 
@@ -37,6 +37,7 @@ impl Fixture {
             next_action: None,
             needs_input: None,
             deliverables: None,
+            steps: None,
             expected_updated_at: None,
         }
     }
@@ -542,4 +543,155 @@ fn exact_key_filter_keeps_done_and_archive_defaults_and_new_fields_have_bounds()
         .is_err());
     assert_eq!(fixture.task("key"), before);
     assert_eq!(fixture.db.revision().unwrap(), revision);
+}
+
+fn step(title: &str, status: StepStatus) -> Step {
+    Step {
+        title: title.into(),
+        status,
+        note: String::new(),
+    }
+}
+
+#[test]
+fn v04_steps_are_a_preserved_patch_and_identical_plans_do_not_bump_updates() {
+    let fixture = Fixture::new();
+    let plan = vec![
+        step("实现导出", StepStatus::InProgress),
+        step("补测试", StepStatus::Todo),
+    ];
+    let created = fixture
+        .db
+        .upsert(UpsertTask {
+            steps: Some(plan.clone()),
+            ..fixture.upsert("feature:steps", Status::InProgress)
+        })
+        .unwrap();
+    assert_eq!(fixture.task("feature:steps").steps, plan);
+    // Omitted steps keep the plan; an unchanged resend is not new progress.
+    let same = fixture
+        .db
+        .upsert(fixture.upsert("feature:steps", Status::InProgress))
+        .unwrap();
+    assert_eq!(same.updated_at, created.updated_at);
+    let mut advanced = plan.clone();
+    advanced[0].status = StepStatus::Done;
+    advanced[0].note = "已完成 CSV 导出".into();
+    let moved = fixture
+        .db
+        .upsert(UpsertTask {
+            steps: Some(advanced.clone()),
+            expected_updated_at: Some(created.updated_at.clone()),
+            ..fixture.upsert("feature:steps", Status::InProgress)
+        })
+        .unwrap();
+    assert_ne!(moved.updated_at, created.updated_at);
+    assert_eq!(fixture.task("feature:steps").steps, advanced);
+    fixture
+        .db
+        .upsert(UpsertTask {
+            steps: Some(vec![]),
+            ..fixture.upsert("feature:steps", Status::InProgress)
+        })
+        .unwrap();
+    assert!(fixture.task("feature:steps").steps.is_empty());
+
+    for invalid in [
+        vec![step("", StepStatus::Todo)],
+        vec![step("多行\n标题", StepStatus::Todo)],
+        (0..13)
+            .map(|i| step(&format!("步骤 {i}"), StepStatus::Todo))
+            .collect(),
+        vec![Step {
+            note: "长".repeat(201),
+            ..step("备注过长", StepStatus::Done)
+        }],
+    ] {
+        assert!(matches!(
+            fixture.db.upsert(UpsertTask {
+                steps: Some(invalid),
+                ..fixture.upsert("feature:steps", Status::InProgress)
+            }),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+    assert!(serde_json::from_str::<Step>(r#"{"title":"x","status":"started"}"#).is_err());
+}
+
+#[test]
+fn v04_reopening_before_review_leaves_a_trace_until_the_next_completion() {
+    let fixture = Fixture::new();
+    fixture
+        .db
+        .upsert(fixture.upsert("feature:withdraw", Status::Done))
+        .unwrap();
+    assert_eq!(
+        fixture.task("feature:withdraw").review_status,
+        ReviewStatus::Pending
+    );
+    let reopened = fixture
+        .db
+        .upsert(fixture.upsert("feature:withdraw", Status::InProgress))
+        .unwrap();
+    let task = fixture.task("feature:withdraw");
+    assert_eq!(task.review_status, ReviewStatus::None);
+    assert_eq!(task.review_withdrawn_at, Some(reopened.updated_at));
+    let mut later = fixture.upsert("feature:withdraw", Status::InProgress);
+    later.progress = "继续修复".into();
+    fixture.db.upsert(later).unwrap();
+    assert!(fixture
+        .task("feature:withdraw")
+        .review_withdrawn_at
+        .is_some());
+    fixture
+        .db
+        .upsert(fixture.upsert("feature:withdraw", Status::Done))
+        .unwrap();
+    let task = fixture.task("feature:withdraw");
+    assert_eq!(task.review_status, ReviewStatus::Pending);
+    assert_eq!(task.review_withdrawn_at, None);
+    // A task that never awaited review gets no trace.
+    fixture
+        .db
+        .upsert(fixture.upsert("feature:plain", Status::Todo))
+        .unwrap();
+    fixture
+        .db
+        .upsert(fixture.upsert("feature:plain", Status::InProgress))
+        .unwrap();
+    assert_eq!(fixture.task("feature:plain").review_withdrawn_at, None);
+}
+
+#[test]
+fn v04_gui_archive_is_versioned_and_not_agent_activity() {
+    let fixture = Fixture::new();
+    let receipt = fixture
+        .db
+        .upsert(fixture.upsert("feature:gui-archive", Status::InProgress))
+        .unwrap();
+    assert!(matches!(
+        fixture.db.archive_by_id(ArchiveById {
+            id: receipt.id,
+            expected_updated_at: "2000-01-01T00:00:00.000Z".into(),
+        }),
+        Err(Error::Conflict)
+    ));
+    let archived = fixture
+        .db
+        .archive_by_id(ArchiveById {
+            id: receipt.id,
+            expected_updated_at: receipt.updated_at.clone(),
+        })
+        .unwrap();
+    let task = fixture.task("feature:gui-archive");
+    assert!(task.archived);
+    assert_eq!(task.updated_at, archived.updated_at);
+    assert_eq!(task.agent_updated_at, Some(receipt.updated_at));
+    assert!(fixture.db.board().unwrap().projects.is_empty());
+    // The Agent can still restore it through the MCP tool.
+    fixture
+        .db
+        .archive(fixture.archive("feature:gui-archive", false, None))
+        .unwrap();
+    assert!(!fixture.task("feature:gui-archive").archived);
 }

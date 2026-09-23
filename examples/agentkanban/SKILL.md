@@ -1,6 +1,6 @@
 ---
 name: agentkanban
-description: 用户明确要求将功能任务加入 AgentKanban、通过开工说明交接已有待办、同步进展或继续已授权跟踪的任务时使用。通过已配置的 AgentKanban MCP 查询和维护同一条记录，不用于普通问答或自动收集全部工作。
+description: 在已配置 AgentKanban MCP 的环境中执行会修改文件的任务、通过开工说明交接已有待办或继续已跟踪的任务时使用。自动入板并在阶段完成时维护同一条记录；不用于普通问答、只读审查或用户明确说不用记的任务。
 ---
 
 # AgentKanban
@@ -9,15 +9,15 @@ description: 用户明确要求将功能任务加入 AgentKanban、通过开工�
 
 ## 记录与继续
 
-1. 用户明确要求把某个功能加入看板时才创建。用户从浮窗复制的开工说明已有项目与任务身份，应接手原记录。此前已授权跟踪的同一任务，后续会话继续同步；普通问答不入板。
-2. 先用 `task_list` 查询当前项目的绝对 `project_path`；已知 `task_key` 时精确过滤，读取 `request`、`user_note` 与 `review_status`。默认每页 20 条未完成、未归档记录，按返回的 `next_offset` 继续；可能已完成或已归档时，按需使用 `include_done` / `include_archived`，精确过滤不会绕过这些范围限制。
-3. 沿用原 `task_key`；新任务选择简短、稳定的功能标识，例如 `feature:export-report`。不要以新会话、分支名或修改后的标题新建同一任务。同一仓库的 worktree 由 MCP 归入同一项目。
+1. 会修改文件的任务（代码、配置、文档）无需用户提醒即自动入板；普通问答、只读审查和调研不入板；用户说「不用记」时不记。用户从浮窗复制的开工说明已有项目与任务身份，应接手原记录。
+2. 先用 `task_list` 查询当前项目的绝对 `project_path`，默认返回每页 5 条未完成、未归档任务的摘要，按 `next_offset` 继续。需要 `request`、`user_note`、`steps` 与 `review_status` 全文时，按 `task_key` 精确查询。可能已完成或已归档时，按需使用 `include_done` / `include_archived`，精确过滤不会绕过这些范围限制。
+3. 找到相符的任务就沿用原 `task_key`；新任务用 `auto:<简短标识>` 或 `feature:export-report` 这类稳定标识。不要以新会话、分支名或修改后的标题新建同一任务。同一仓库的 worktree 由 MCP 归入同一项目。
 
 ## 更新同一条任务
 
-只在开始执行、有实质进展、实际受阻和完成时调用 `task_upsert`。状态使用 `todo`、`in_progress`、`blocked`、`done`。`blocked` 必须有阻碍继续工作的真实原因；耗时较久或久未更新本身不是阻塞。工作与必要验证完成后才标 `done`，不要把未运行的验证写成通过。
+创建时用 `steps` 写下计划（最多 12 步），之后只在阶段完成（某个步骤完成）、实际受阻和全部完成时调用 `task_upsert`，每次整份替换 `steps`；不为单次修改或命令更新。状态使用 `todo`、`in_progress`、`blocked`、`done`。`blocked` 必须有阻碍继续工作的真实原因；耗时较久或久未更新本身不是阻塞。工作与必要验证完成后才标 `done`，不要把未运行的验证写成通过。
 
-`task_upsert` 每次都传 `project_path`、`task_key`、`title`、`status`、`progress`。需要保留分支时同时传 `branch`；省略或传 `null` 会清除分支。`agent`、`next_action`、`needs_input`、`deliverables` 省略则保留，清空字符串字段用 `""`、清空成果用 `[]`；`agent: null` 仍保留。不要把工具理解为所有字段的完整替换。
+`task_upsert` 每次都传 `project_path`、`task_key`、`title`、`status`、`progress`。需要保留分支时同时传 `branch`；省略或传 `null` 会清除分支。`agent`、`next_action`、`needs_input`、`deliverables`、`steps` 省略则保留，清空字符串字段用 `""`、清空数组用 `[]`；`agent: null` 仍保留。不要把工具理解为所有字段的完整替换。
 
 `progress` 用一句单行事实概括进展；`agent` 如实填写执行方，`next_action` 说明下一步，`needs_input` 明确需要用户提供什么。阻塞解除后显式清空 `needs_input`，状态变化不会自动清空它。不复制聊天历史、命令流水、完整日志或敏感凭据。内容没有变化时不重复更新，不为消除久未更新提示制造进展。
 

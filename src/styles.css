@@ -135,6 +135,8 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
 .review-badge { color: var(--accent); font-size: 10px; line-height: 1.7; padding: 1px 6px; background: var(--hover); border-radius: 4px; }
 .review-badge.accepted { color: var(--green); }
 .review-badge.changes_requested, .input-signal { color: var(--amber); }
+.review-badge.withdrawn { color: var(--amber); }
+.step-count { color: var(--teal); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .agent-name { color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 160px; }
 .task-review .task-title { color: var(--text); }
 .agent-attribution { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
@@ -154,6 +156,13 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
 .primary-button:hover:not(:disabled) { filter: brightness(.92); }
 .version-notice { padding: 8px; background: var(--hover); border-left: 2px solid var(--amber); margin: 12px 0; }
 .version-notice p { color: var(--amber); }
+.steps { list-style: none; padding: 0; margin: 0; }
+.steps li { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline; font-size: 12px; line-height: 1.6; }
+.steps li + li { margin-top: 6px; }
+.step-title { overflow-wrap: anywhere; }
+.step-done .step-title { color: var(--muted); }
+.step-note { grid-column: 2; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.withdrawn-notice { color: var(--amber); }
 .deliverables { list-style: none; padding: 0; margin: 0; }
 .deliverables li + li { margin-top: 12px; }
 .deliverables strong { font-size: 12px; font-weight: 500; }

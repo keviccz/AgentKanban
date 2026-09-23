@@ -26,6 +26,8 @@ args = []
 
 TOML 示例使用正斜杠，避免 Windows 反斜杠转义。`command` 是可执行文件本身，不是 PowerShell 命令行，也不包含额外的嵌套引号。
 
+**Codex 还需要一行 AGENTS.md 规则。** 实测 Codex CLI 0.156.1（本机配置，同时接入 Playwright 等 MCP）会延迟加载 MCP 工具说明，模型只看到工具名，看不到工具描述和服务器 `instructions`，因此不会自动入板。将 [examples/codex-AGENTS-snippet.md](../examples/codex-AGENTS-snippet.md) 的内容（约 150 token）追加到 `%USERPROFILE%\.codex\AGENTS.md`；浮窗设置的 Codex 接入页可直接复制。
+
 ### Claude Code
 
 在 PowerShell 中使用实际安装路径添加用户范围服务器：
@@ -56,16 +58,18 @@ claude mcp add --transport stdio --scope user agentkanban -- "$env:LOCALAPPDATA\
 
 ## 更新规则
 
-- 只有用户明确要求记录的功能任务才入板，普通问答和逐条命令不入板。用户从浮窗创建并交给 Agent 的待办已有记录，先查询并接手，不重复新建。
-- 每个任务选择一个稳定的 `task_key`，例如 `feature:export-report`。创建、更新、完成后重新打开都沿用它，避免每轮对话创建新任务。
-- 开始执行、阶段变化、遇到阻塞和完成时，用一句话概括实质进展。无变化时不重复写入，不复制聊天历史、完整日志或敏感凭据。
-- 后续会话先 `task_list` 查询当前项目未完成项，找到原记录后继续更新；已知 `task_key` 时可精确过滤。读取 `request`、`user_note` 和验收状态，再决定下一步。若可能已完成或已归档，显式扩展查询范围。
+自 0.4 起默认自动入板。规则写在 `task_list` 与 `task_upsert` 的工具描述中，随工具列表交给模型；Codex 延迟加载工具说明，需另加上文的一行 AGENTS.md 规则。无需另装 Skill：
+
+- 会修改文件的任务（代码、配置、文档）无需用户提醒即自动入板；普通问答、只读审查和调研不入板；用户说「不用记」时不记。用户从浮窗创建并交给 Agent 的待办已有记录，先查询并接手，不重复新建。
+- 每个任务选择一个稳定的 `task_key`：自动入板用 `auto:<简短标识>`，也可沿用 `feature:export-report` 这类已有标识。创建、更新、完成后重新打开都沿用它，避免每轮对话创建新任务。
+- 开工时用 `steps` 写下计划步骤，之后只在阶段完成（某个步骤完成）、遇到真实阻塞和全部完成时更新；不为单次修改或命令更新。无变化时不重复写入，不复制聊天历史、完整日志或敏感凭据。
+- 后续会话先 `task_list` 查询当前项目未完成项的摘要，找到原记录后继续更新；按 `task_key` 精确查询读取 `request`、`user_note`、`steps` 和验收状态，再决定下一步。若可能已完成或已归档，显式扩展查询范围。
 - 标题描述功能；`progress` 说明目前结果或阻塞。`in_progress` 只表示最近一次上报，不是进程存活检测。
 - `blocked` 用于实际阻碍继续推进的输入、依赖或外部问题；单纯耗时或久未更新不构成阻塞。用 `needs_input` 说明需要用户提供什么，解决后显式清空。只有工作与必要验证完成后才标记 `done`，并提供成果位置、如实说明未验证范围；`done` 是执行完成，不是用户验收通过。
 - 更新已有任务时建议携带最近查询到的 `expected_updated_at`。出现冲突就重新查询、读取新增反馈并合并进展，不去掉校验强行覆盖。
 - 通过 MCP 工具读写任务，不直接编辑 SQLite；只有工具返回成功，才可声称已同步。
 
-可将 [AGENT_RULES.md](AGENT_RULES.md) 的短中文规则复制进项目 Agent 指令。浮窗复制的同步规则与该文件保持一致。
+若某个客户端需要更完整的规则，可将 [AGENT_RULES.md](AGENT_RULES.md) 的短中文规则复制进项目 Agent 指令。浮窗复制的同步规则与该文件保持一致。
 
 另有 [可选 Skill 示例](../examples/agentkanban/SKILL.md)，适合在支持 Skill 的 Agent 中按需使用。它只补充记录与同步流程，不启动 MCP、不增加工具，也不能代替上述客户端配置；仓库提供示例，不自动安装或修改全局 Agent 指令。
 
@@ -84,8 +88,12 @@ claude mcp add --transport stdio --scope user agentkanban -- "$env:LOCALAPPDATA\
 | `user_note` | 用户最新一条补充或修改意见，最多 2000 字符，可多行；不是聊天历史 |
 | `review_status` | `none` 无验收记录、`pending` 等待验收、`accepted` 已通过、`changes_requested` 需修改 |
 | `agent_updated_at` | 最近一次 Agent 实质更新的服务器时间；与整条记录的 `updated_at` 分开 |
+| `steps` | Agent 的计划步骤，最多 12 项 `{title,status,note?}`，状态同任务四种状态；浮窗卡片显示完成数，详情显示完整清单 |
+| `review_withdrawn_at` | Agent 在用户验收前把 `done` 任务改回其他状态的时间；下次完成时清除，浮窗显示「已撤回验收」 |
 
-新任务直接设为 `done`，或从其他状态转为 `done`，会进入 `pending`。用户在浮窗中通过验收后成为 `accepted`；退回修改必须填写意见，任务变为 `todo` 与 `changes_requested`，重新进入默认未完成查询。Agent 继续执行时保留修改请求，下一次完成重新等待验收。已通过的完成任务被 Agent 实质修改后也需重新验收。
+用户可在浮窗任务详情中归档任务（二次确认，数据保留，不计为 Agent 更新）；浮窗不列出已归档任务，恢复由 Agent 调用 `task_archive(archived=false)`。
+
+新任务直接设为 `done`，或从其他状态转为 `done`，会进入 `pending`。在用户验收前 Agent 又把任务改为其他状态时，待验收被取消并记录 `review_withdrawn_at`。用户在浮窗中通过验收后成为 `accepted`；退回修改必须填写意见，任务变为 `todo` 与 `changes_requested`，重新进入默认未完成查询。Agent 继续执行时保留修改请求，下一次完成重新等待验收。已通过的完成任务被 Agent 实质修改后也需重新验收。
 
 `request`、`user_note` 和 `review_status` 不能由 MCP 直接写入，Agent 无法代替用户通过验收。旧版已完成任务迁移后保持 `done` 与 `none`，不强制全部重新验收；重新打开后再完成才进入新验收流程。人工反馈会改变 `updated_at`，但不改变 `agent_updated_at`。
 
@@ -111,6 +119,7 @@ claude mcp add --transport stdio --scope user agentkanban -- "$env:LOCALAPPDATA\
 | `next_action` | string，可选 | 下一步，最多 600 字符；省略保留，空字符串清空 |
 | `needs_input` | string，可选 | 需要用户提供的内容，最多 600 字符；省略保留，空字符串清空 |
 | `deliverables` | array，可选 | 最多 5 项 `{label,uri}`；省略保留，空数组清空。`label` 为 1–100 字符，`uri` 为 1–1000 字符的路径或 HTTP(S) 链接 |
+| `steps` | array，可选 | 最多 12 项 `{title,status,note?}`；`title` 1–120 字符，`note` 最多 200 字符，均为单行。省略保留，传入时整份替换，空数组清空 |
 | `expected_updated_at` | string，可选 | 最近读取的 `updated_at`；与当前记录不符时拒绝更新，不写入任何变化 |
 
 四种状态对应待办、进行中、受阻、已完成。此工具的文字字段只接受单行，不接受换行或控制字符。更新时提供完整的必填字段；省略 `branch` 或传 `null` 会清除标签，需要保留时一并传入。新增的 Agent 交接字段使用上述保留/清空规则，不能把整个工具理解为全字段替换。状态变化不会自动清空 `needs_input`，问题解决后应显式传空字符串。已归档任务必须先用 `task_archive` 恢复，再更新。
@@ -140,19 +149,20 @@ claude mcp add --transport stdio --scope user agentkanban -- "$env:LOCALAPPDATA\
 
 ### `task_list`
 
-查询任务并分页，默认只返回未完成、未归档任务。
+查询任务并分页，默认只返回未完成、未归档任务的摘要，控制 Agent 上下文占用。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `project_path` | 不限项目 | 可选，按项目身份过滤 |
-| `task_key` | 不限标识 | 可选，精确匹配；建议同时指定项目 |
+| `task_key` | 不限标识 | 可选，精确匹配；建议同时指定项目。指定时默认返回完整记录 |
 | `status` | 不限状态 | 可选，四种状态之一 |
 | `include_done` | `false` | 是否包含已完成项 |
 | `include_archived` | `false` | 是否包含已归档项 |
-| `limit` | `20` | 每页数量，最大 `100` |
+| `detail` | 有 `task_key` 时为 `true`，否则 `false` | 是否返回完整记录 |
+| `limit` | `5` | 每页数量，最大 `100` |
 | `offset` | `0` | 从第几个结果开始，非负整数 |
 
-返回 `{"items":[...],"next_offset":20}`。继续时将返回的 `next_offset` 作为下一次 `offset`；`null` 表示没有下一页。每条记录包含任务身份、项目、标题、状态、进展、可选分支、归档标记、更新时间及上文交接字段。查询范围包含完成项时用 `include_done: true`；只查询完成项时可直接传 `status: "done"`。`task_key` 精确过滤不会绕过完成与归档过滤，找不到记录时先检查查询范围。
+返回 `{"items":[...],"next_offset":5}`。继续时将返回的 `next_offset` 作为下一次 `offset`；`null` 表示没有下一页。摘要只含 `id`、`task_key`、`title`、`status`、`progress`、`branch`、`archived`、`review_status`、`updated_at`、`project_path`，以及有值时的 `steps`（如 `"2/5"`）、`has_user_note`、`needs_input` 标记；完整记录另含项目名、`request`、`user_note`、`steps` 明细、`deliverables` 等全部交接字段。查询范围包含完成项时用 `include_done: true`；只查询完成项时可直接传 `status: "done"`。`task_key` 精确过滤不会绕过完成与归档过滤，找不到记录时先检查查询范围。
 
 ```json
 {"project_path":"E:/Projects/Example","task_key":"feature:export-report","include_done":true}

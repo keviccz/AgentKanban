@@ -353,3 +353,111 @@ fn v03_exact_lookup_and_optimistic_conflicts_are_exposed_as_tool_errors() {
     let list = server.handle(request(6,"tools/call",json!({"name":"task_list","arguments":{"task_key":"guarded-prefix","include_done":true}}))).unwrap();
     assert_eq!(list["result"]["structuredContent"]["items"], json!([]));
 }
+
+fn call(server: &mut Server, id: i64, name: &str, arguments: Value) -> Value {
+    server
+        .handle(request(
+            id,
+            "tools/call",
+            json!({"name":name,"arguments":arguments}),
+        ))
+        .unwrap()["result"]
+        .clone()
+}
+
+#[test]
+fn v04_list_defaults_to_small_summaries_and_exact_keys_return_full_records() {
+    let (root, _db) = fixture();
+    let mut server = Server::new(_db);
+    server.handle(initialize("2025-11-25"));
+    for index in 0..7 {
+        let steps = json!([{"title":"实现","status":"done","note":"完成"},{"title":"测试","status":"in_progress"}]);
+        let result = call(
+            &mut server,
+            10 + index,
+            "task_upsert",
+            json!({"project_path":root.path(),"task_key":format!("auto:item-{index}"),"title":"条目","status":"in_progress","progress":"进行中","steps":steps}),
+        );
+        assert_eq!(result["isError"], false, "{result}");
+    }
+    let page = call(
+        &mut server,
+        30,
+        "task_list",
+        json!({"project_path":root.path()}),
+    );
+    let page = &page["structuredContent"];
+    assert_eq!(page["items"].as_array().unwrap().len(), 5);
+    assert_eq!(page["next_offset"], 5);
+    let summary = page["items"][0].as_object().unwrap();
+    assert_eq!(summary["steps"], "1/2");
+    for heavy in [
+        "request",
+        "user_note",
+        "deliverables",
+        "next_action",
+        "agent_updated_at",
+    ] {
+        assert!(!summary.contains_key(heavy), "summary leaked {heavy}");
+    }
+    assert!(!summary.contains_key("has_user_note"));
+
+    let exact = call(
+        &mut server,
+        31,
+        "task_list",
+        json!({"project_path":root.path(),"task_key":"auto:item-3"}),
+    );
+    let full = &exact["structuredContent"]["items"][0];
+    assert_eq!(full["steps"][0]["note"], "完成");
+    assert!(full["steps"][1].get("note").is_none());
+    assert_eq!(full["request"], "");
+
+    let detailed = call(
+        &mut server,
+        32,
+        "task_list",
+        json!({"project_path":root.path(),"detail":true,"limit":2}),
+    );
+    assert_eq!(
+        detailed["structuredContent"]["items"][0]["steps"][0]["title"],
+        "实现"
+    );
+    let forced_summary = call(
+        &mut server,
+        33,
+        "task_list",
+        json!({"project_path":root.path(),"task_key":"auto:item-3","detail":false}),
+    );
+    assert_eq!(
+        forced_summary["structuredContent"]["items"][0]["steps"],
+        "1/2"
+    );
+    let invalid = call(&mut server, 34, "task_list", json!({"detail":"yes"}));
+    assert_eq!(invalid["isError"], true);
+    let invalid_step = call(
+        &mut server,
+        35,
+        "task_upsert",
+        json!({"project_path":root.path(),"task_key":"auto:bad","title":"x","status":"todo","progress":"","steps":[{"title":"x","status":"started"}]}),
+    );
+    assert_eq!(invalid_step["isError"], true);
+}
+
+#[test]
+fn v04_tool_descriptions_carry_tracking_rules_and_stay_small() {
+    let (_root, db) = fixture();
+    let mut server = Server::new(db);
+    let init = server.handle(initialize("2025-11-25")).unwrap();
+    assert!(init["result"]["instructions"].as_str().unwrap().len() < 300);
+    let tools = server.handle(request(2, "tools/list", json!({}))).unwrap();
+    let tools = &tools["result"]["tools"];
+    // Clients that ignore server instructions still see these descriptions.
+    let list = tools[1]["description"].as_str().unwrap();
+    assert!(list.contains("without being asked") && list.contains("modify files"));
+    assert!(tools[0]["description"]
+        .as_str()
+        .unwrap()
+        .contains("milestones"));
+    assert!(tools.to_string().len() < 4300);
+}

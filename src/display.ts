@@ -17,4 +17,5 @@ export function isStale(task: Task, hours: number, now: number) {
 export const awaitsReview = (task: Task) => task.status === 'done' && task.review_status === 'pending';
 export const inActiveList = (task: Task) => task.status !== 'done' || awaitsReview(task);
 export const matchesFilter = (task: Task, filter: Filter) => filter === 'all' || (filter === 'review' ? awaitsReview(task) : task.status === filter);
+export const stepProgress = (task: Task) => task.steps.length ? `${task.steps.filter(step => step.status === 'done').length}/${task.steps.length}` : '';
 export const reviewLabels = { none: '', pending: '待你验收', accepted: '已验收', changes_requested: '需修改' };

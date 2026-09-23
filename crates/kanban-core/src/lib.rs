@@ -79,6 +79,25 @@ impl ReviewStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepStatus {
+    Todo,
+    InProgress,
+    Blocked,
+    Done,
+}
+
+/// One plan step. The Agent replaces the whole list; the GUI only displays it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Step {
+    pub title: String,
+    pub status: StepStatus,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Deliverable {
@@ -113,6 +132,11 @@ pub struct Task {
     pub user_note: String,
     #[serde(default)]
     pub agent_updated_at: Option<String>,
+    #[serde(default)]
+    pub steps: Vec<Step>,
+    /// Set when the Agent reopened a done task before the user reviewed it.
+    #[serde(default)]
+    pub review_withdrawn_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +191,12 @@ pub struct UpsertTask {
         deserialize_with = "optional_non_null",
         skip_serializing_if = "Option::is_none"
     )]
+    pub steps: Option<Vec<Step>>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub expected_updated_at: Option<String>,
 }
 
@@ -186,6 +216,14 @@ pub struct ReviewTask {
     pub expected_updated_at: String,
     pub accepted: bool,
     pub note: String,
+}
+
+/// GUI archive: a human action, so it never counts as Agent activity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveById {
+    pub id: i64,
+    pub expected_updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,7 +386,26 @@ impl Database {
             std::fs::create_dir_all(parent)?;
         }
         let db = Self { path };
-        let mut conn = db.connect()?;
+        // Switching a new database to WAL can report SQLITE_BUSY without consulting
+        // the busy handler when several clients start MCP at once. Retry briefly.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match db.prepare_schema() {
+                Err(Error::Database(rusqlite::Error::SqliteFailure(failure, _)))
+                    if matches!(
+                        failure.code,
+                        rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                    ) && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                result => return result.map(|()| db),
+            }
+        }
+    }
+
+    fn prepare_schema(&self) -> Result<()> {
+        let mut conn = self.connect()?;
         let mode: String = conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
         if !mode.eq_ignore_ascii_case("wal") {
             return Err(Error::InvalidInput(
@@ -357,7 +414,7 @@ impl Database {
         }
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 2 {
+        if version > 3 {
             return Err(Error::NewerSchema(version));
         }
         if version == 0 {
@@ -402,8 +459,15 @@ impl Database {
                  PRAGMA user_version=2;",
             )?;
         }
+        if version <= 2 {
+            tx.execute_batch(
+                "ALTER TABLE tasks ADD COLUMN steps TEXT NOT NULL DEFAULT '[]';
+                 ALTER TABLE tasks ADD COLUMN review_withdrawn_at TEXT;
+                 PRAGMA user_version=3;",
+            )?;
+        }
         tx.commit()?;
-        Ok(db)
+        Ok(())
     }
 
     pub fn path(&self) -> &Path {
@@ -498,6 +562,9 @@ impl Database {
         if let Some(deliverables) = &input.deliverables {
             validate_deliverables(deliverables)?;
         }
+        if let Some(steps) = &input.steps {
+            validate_steps(steps)?;
+        }
         if let Some(expected) = &input.expected_updated_at {
             validate_text("expected_updated_at", expected, 1, 64)?;
         }
@@ -542,6 +609,12 @@ impl Database {
                 .map(|task| task.deliverables.clone())
                 .unwrap_or_default()
         });
+        let steps = input.steps.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .map(|task| task.steps.clone())
+                .unwrap_or_default()
+        });
         if let Some(ref task) = existing {
             if task.archived {
                 return Err(Error::TaskArchived);
@@ -554,6 +627,7 @@ impl Database {
                 && task.next_action == next_action
                 && task.needs_input == needs_input
                 && task.deliverables == deliverables
+                && task.steps == steps
             {
                 return Ok(TaskReceipt::from(task));
             }
@@ -579,22 +653,36 @@ impl Database {
             ReviewStatus::None
         };
         let updated_at = changed_at(existing.as_ref().map(|task| task.updated_at.as_str()));
+        // Reopening a done task before review cancels that review; keep a visible trace.
+        let review_withdrawn_at = match &existing {
+            _ if input.status == Status::Done => None,
+            Some(task)
+                if task.status == Status::Done && task.review_status == ReviewStatus::Pending =>
+            {
+                Some(updated_at.clone())
+            }
+            Some(task) => task.review_withdrawn_at.clone(),
+            None => None,
+        };
         let deliverables = serde_json::to_string(&deliverables)
             .map_err(|err| Error::InvalidInput(err.to_string()))?;
+        let steps =
+            serde_json::to_string(&steps).map_err(|err| Error::InvalidInput(err.to_string()))?;
         let id = if let Some(task) = existing {
             tx.execute(
                 "UPDATE tasks SET title=?1,status=?2,progress=?3,branch=?4,updated_at=?5,
-                    agent=?6,next_action=?7,needs_input=?8,deliverables=?9,review_status=?10,agent_updated_at=?5 WHERE id=?11",
+                    agent=?6,next_action=?7,needs_input=?8,deliverables=?9,review_status=?10,agent_updated_at=?5,
+                    steps=?11,review_withdrawn_at=?12 WHERE id=?13",
                 params![input.title, input.status.as_str(), input.progress, input.branch, updated_at,
-                    agent,next_action,needs_input,deliverables,review_status.as_str(),task.id]
+                    agent,next_action,needs_input,deliverables,review_status.as_str(),steps,review_withdrawn_at,task.id]
             )?;
             task.id
         } else {
             tx.execute(
-                "INSERT INTO tasks(project_id,task_key,title,status,progress,branch,updated_at,agent,next_action,needs_input,deliverables,review_status,agent_updated_at)
-                    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?7)",
+                "INSERT INTO tasks(project_id,task_key,title,status,progress,branch,updated_at,agent,next_action,needs_input,deliverables,review_status,agent_updated_at,steps)
+                    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?7,?13)",
                 params![project_id, input.task_key, input.title, input.status.as_str(), input.progress, input.branch, updated_at,
-                    agent,next_action,needs_input,deliverables,review_status.as_str()]
+                    agent,next_action,needs_input,deliverables,review_status.as_str(),steps]
             )?;
             tx.last_insert_rowid()
         };
@@ -689,6 +777,35 @@ impl Database {
         tx.execute(
             "UPDATE tasks SET archived=?1,updated_at=?2,agent_updated_at=?2 WHERE id=?3",
             params![input.archived, updated_at, task.id],
+        )?;
+        tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
+        tx.commit()?;
+        Ok(TaskReceipt {
+            id: task.id,
+            status: task.status,
+            updated_at,
+        })
+    }
+
+    /// Hide a task from the board by user request. Restoring stays an Agent tool
+    /// (task_archive archived=false) because the board does not list archived tasks.
+    pub fn archive_by_id(&self, input: ArchiveById) -> Result<TaskReceipt> {
+        validate_task_id(input.id)?;
+        validate_text("expected_updated_at", &input.expected_updated_at, 1, 64)?;
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = tx
+            .query_row("SELECT * FROM tasks WHERE id=?1", [input.id], read_task)
+            .optional()?
+            .ok_or(Error::TaskNotFound)?;
+        check_expected(Some(&input.expected_updated_at), Some(&task))?;
+        if task.archived {
+            return Ok(TaskReceipt::from(&task));
+        }
+        let updated_at = changed_at(Some(&task.updated_at));
+        tx.execute(
+            "UPDATE tasks SET archived=1,updated_at=?1 WHERE id=?2",
+            params![updated_at, task.id],
         )?;
         tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
         tx.commit()?;
@@ -925,6 +1042,17 @@ fn validate_deliverables(deliverables: &[Deliverable]) -> Result<()> {
     Ok(())
 }
 
+fn validate_steps(steps: &[Step]) -> Result<()> {
+    if steps.len() > 12 {
+        return Err(Error::InvalidInput("steps allows at most 12 items".into()));
+    }
+    for step in steps {
+        validate_text("step title", &step.title, 1, 120)?;
+        validate_text("step note", &step.note, 0, 200)?;
+    }
+    Ok(())
+}
+
 fn check_expected(expected: Option<&str>, task: Option<&Task>) -> Result<()> {
     if let Some(expected) = expected {
         if task.is_none_or(|task| task.updated_at != expected) {
@@ -981,6 +1109,10 @@ fn read_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     let deliverables = serde_json::from_str(&raw_deliverables).map_err(|err| {
         rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(err))
     })?;
+    let raw_steps: String = row.get("steps")?;
+    let steps = serde_json::from_str(&raw_steps).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(17, rusqlite::types::Type::Text, Box::new(err))
+    })?;
     Ok(Task {
         id: row.get("id")?,
         project_id: row.get("project_id")?,
@@ -999,5 +1131,7 @@ fn read_task(row: &Row<'_>) -> rusqlite::Result<Task> {
         review_status,
         user_note: row.get("user_note")?,
         agent_updated_at: row.get("agent_updated_at")?,
+        steps,
+        review_withdrawn_at: row.get("review_withdrawn_at")?,
     })
 }

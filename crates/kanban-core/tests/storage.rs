@@ -36,6 +36,7 @@ impl Fixture {
             next_action: None,
             needs_input: None,
             deliverables: None,
+            steps: None,
             expected_updated_at: None,
         }
     }

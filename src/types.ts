@@ -2,12 +2,14 @@ export type Status = 'todo' | 'in_progress' | 'blocked' | 'done';
 export type Filter = 'all' | 'review' | Exclude<Status, 'done'>;
 export type ReviewStatus = 'none' | 'pending' | 'accepted' | 'changes_requested';
 export interface Deliverable { label: string; uri: string }
+export interface Step { title: string; status: Status; note?: string }
 export interface Task {
   id: number; project_id: number; task_key: string; title: string; status: Status;
   progress: string; branch: string | null; updated_at: string; archived: boolean;
   request: string; agent: string | null; next_action: string; needs_input: string;
   deliverables: Deliverable[]; review_status: ReviewStatus; user_note: string;
   agent_updated_at: string | null;
+  steps: Step[]; review_withdrawn_at: string | null;
 }
 export interface TaskReceipt { id: number; status: Status; updated_at: string }
 export interface CaptureInput { project_path: string; task_key: string; title: string; request: string }
