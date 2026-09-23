@@ -1,11 +1,12 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { compactWindow, hideWindow, native, onError, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, readTrackingPaused, savePreferences, setTrackingPaused } from './bridge';
 import { defaults, labels, type CaptureInput, type Filter, type Preferences, type Project, type Snapshot, type Task, type TaskReceipt } from './types';
-import { awaitsReview, inActiveList, isStale, matchesFilter, relativeTime, reviewLabels, stepProgress } from './display';
+import { awaitsReview, inActiveList, isStale, matchesFilter, needsAttention, normalizeFilter, relativeTime, reviewLabels, stepProgress } from './display';
 import { Settings } from './Panels';
 import { CapturePanel, TaskDetails, type FeedbackDraft } from './Workflows';
 
-const filterLabels: Record<Filter, string> = { all: '全部', review: '待验收', in_progress: '进行中', blocked: '受阻', todo: '待办' };
+const filterLabels: Record<Filter, string> = { all: '全部', attention: '等你处理', in_progress: '进行中' };
+const SLOGAN = 'Agent 推进，你来验收。';
 
 type IconName = 'logo' | 'pin' | 'sun' | 'moon' | 'minus' | 'close' | 'chevron' | 'branch' | 'expand';
 function Icon({ name, className = '' }: { name: IconName; className?: string }) {
@@ -83,6 +84,7 @@ export function App() {
 
   const applyPreferences = useCallback((next: Preferences) => {
     preferencesGeneration.current += 1;
+    next = { ...next, filter: normalizeFilter(next.filter) };
     preferencesRef.current = next; setPreferences(next);
     preferencesLoaded.current = true; setPreferencesReady(true);
   }, []);
@@ -207,8 +209,8 @@ export function App() {
   const projectsInScope = focusActive ? focusedProject ? [focusedProject] : [] : snapshot.projects;
   const allTasks = projectsInScope.flatMap(project => project.tasks);
   const ongoing = allTasks.filter(task => task.status === 'in_progress').length;
-  const blocked = allTasks.filter(task => task.status === 'blocked').length;
-  const pendingReview = allTasks.filter(awaitsReview).length;
+  const attention = allTasks.filter(needsAttention).length;
+  const filterCounts: Record<Filter, number | null> = { all: null, attention, in_progress: ongoing };
   const visibleProjects = projectsInScope.filter(project => project.tasks.some(task => matchesFilter(task, preferences.filter)))
     .sort((a, b) => Number(preferences.pinned_projects.includes(b.id)) - Number(preferences.pinned_projects.includes(a.id)));
   const selectedProject = snapshot.projects.find(project => project.tasks.some(task => task.id === selectedTaskId));
@@ -225,17 +227,16 @@ export function App() {
   return <main className={`app ${preferences.compact ? 'compact' : ''}`}>
     <header className="titlebar" data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region><Icon name="logo" /><span data-tauri-drag-region>AgentKanban</span></div>
-      {preferences.compact && <div className="strip-counts" data-tauri-drag-region><span className="in_progress">{ongoing} 进行中</span><span className="blocked">{blocked} 受阻</span>{trackingPaused && <span className="paused-chip" title="Agent 记录已暂停">已暂停</span>}</div>}
+      {preferences.compact && <div className="strip-counts" data-tauri-drag-region><span className="in_progress">{ongoing} 进行中</span><span className="blocked">{attention} 等你处理</span>{trackingPaused && <span className="paused-chip" title="Agent 记录已暂停">已暂停</span>}</div>}
       <div className="window-actions">{controls}</div>
     </header>
     {!preferences.compact && <>
-      <div className="summary" title="数量表示 Agent 最后上报的状态；意外退出不会自动完成任务。"><span className="in_progress">{ongoing} 进行中</span><span className="summary-separator">·</span><span className="blocked">{blocked} 受阻</span>{pendingReview > 0 && <button className="review-summary" disabled={busy} onClick={() => void update({ filter: 'review' })}>{pendingReview} 待验收</button>}</div>
       {(snapshot.projects.length > 0 || focusActive) && <div className="project-focus"><select aria-label="聚焦项目" value={preferences.focused_project ?? ''} disabled={busy} onChange={event => void update({ focused_project: event.target.value ? Number(event.target.value) : null })}><option value="">全部项目 · {snapshot.projects.length}</option>{focusActive && !focusedProject && <option value={preferences.focused_project!}>聚焦的项目暂无任务</option>}{snapshot.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select>{focusActive && <button className="text-button" disabled={busy} onClick={() => void update({ focused_project: null })}>查看全部</button>}</div>}
-      <nav className="filters" aria-label="按状态筛选">{(['all', 'in_progress', 'blocked', 'todo', 'review'] as Filter[]).map(filter => <button key={filter} disabled={busy} aria-pressed={preferences.filter === filter} className={preferences.filter === filter ? 'selected' : ''} onClick={() => void update({ filter })}>{filterLabels[filter]}</button>)}</nav>
+      {snapshot.projects.length > 0 && <nav className="filters" aria-label="按状态筛选" title="等你处理：受阻、需要你补充或等你验收。数量取自 Agent 最后上报，意外退出不会自动完成任务。">{(['all', 'attention', 'in_progress'] as Filter[]).map(filter => <button key={filter} disabled={busy} aria-pressed={preferences.filter === filter} className={preferences.filter === filter ? 'selected' : ''} onClick={() => void update({ filter })}>{filterLabels[filter]}{filterCounts[filter] !== null && <span className={`filter-count ${filter === 'attention' && attention > 0 ? 'blocked' : ''}`}>{filterCounts[filter]}</span>}</button>)}</nav>}
       {trackingPaused && <div className="paused-banner" role="status"><span>Agent 记录已暂停：看板工具不读不写，Agent 照常工作。</span><button disabled={pauseBusy} onClick={() => void togglePause()}>恢复</button></div>}
       {error && <div className="error" role="alert"><span title={error}>{error}</span><button onClick={() => void refresh(true)}>重试</button></div>}
       <div className="board" aria-label="项目任务" aria-busy={!ready}>
-        {!ready ? <div className="empty"><p>正在读取看板…</p></div> : visibleProjects.length ? visibleProjects.map(project => <ProjectSection key={project.id} project={project} preferences={preferences} update={p => void update(p)} now={now} busy={busy} onOpen={setSelectedTaskId} />) : <div className="empty"><Icon name="logo" /><h2>{snapshot.projects.length ? `没有${preferences.filter === 'all' ? '' : filterLabels[preferences.filter]}任务` : '把正在推进的事，交给看板。'}</h2><p>{snapshot.projects.length ? '切换项目或状态筛选，查看其他任务。' : '记下需求，交给 Agent 推进，再回来检查成果。'}</p><button className="outline-button empty-create" disabled={!native} onClick={openCapture}>新建任务</button>{!native && <p className="preview-note">浏览器布局预览 · 请启动桌面版连接本地看板</p>}</div>}
+        {!ready ? <div className="empty"><p>正在读取看板…</p></div> : visibleProjects.length ? visibleProjects.map(project => <ProjectSection key={project.id} project={project} preferences={preferences} update={p => void update(p)} now={now} busy={busy} onOpen={setSelectedTaskId} />) : <div className="empty"><Icon name="logo" /><h2>{snapshot.projects.length ? `没有${preferences.filter === 'all' ? '' : filterLabels[preferences.filter]}的任务` : SLOGAN}</h2>{snapshot.projects.length && preferences.filter !== 'all' ? <button className="outline-button empty-create" disabled={busy} onClick={() => void update({ filter: 'all' })}>查看全部</button> : <button className="outline-button empty-create" disabled={!native} onClick={openCapture}>新建任务</button>}{!native && <p className="preview-note">浏览器布局预览 · 请启动桌面版连接本地看板</p>}</div>}
       </div>
       <footer><button className="footer-create" disabled={!native} title="新建任务（Ctrl+Alt+N；窗口内 Ctrl+N）" onClick={openCapture}>＋ 新建</button>{error || !native ? <span title={error || '浏览器预览不连接本地看板。'}>{error ? '同步异常' : '布局预览'}</span> : <button className={`footer-pause ${trackingPaused ? 'is-paused' : ''}`} aria-pressed={trackingPaused} disabled={pauseBusy} title={trackingPaused ? '恢复后 Agent 重新自动记录，已开的会话也立即生效' : '暂停后 Agent 不再读写看板，已开的会话也立即生效'} onClick={() => void togglePause()}>{trackingPaused ? '记录已暂停 · 恢复' : '暂停记录'}</button>}<button className="footer-settings" onClick={() => setSettingsOpen(true)}>设置与接入</button></footer>
     </>}

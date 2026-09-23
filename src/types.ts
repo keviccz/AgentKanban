@@ -1,5 +1,5 @@
 export type Status = 'todo' | 'in_progress' | 'blocked' | 'done';
-export type Filter = 'all' | 'review' | Exclude<Status, 'done'>;
+export type Filter = 'all' | 'attention' | 'in_progress';
 export type ReviewStatus = 'none' | 'pending' | 'accepted' | 'changes_requested';
 export interface Deliverable { label: string; uri: string }
 export interface Step { title: string; status: Status; note?: string }

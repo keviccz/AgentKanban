@@ -15,13 +15,12 @@ button:disabled { cursor: default; opacity: .45; }
 .icon-button:hover { background: var(--hover); color: var(--text); }
 .icon-button.is-pinned { color: var(--text); }
 .close-button:hover:not(:disabled) { background: #be3c37; color: white; }
-.summary { display: flex; align-items: center; gap: 12px; padding: 4px 17px 10px; font-size: 15px; font-weight: 600; line-height: 24px; }
-.summary-separator { color: var(--muted); font-weight: 400; }
 .in_progress { color: var(--teal); } .blocked { color: var(--amber); } .todo { color: var(--muted); } .done { color: var(--green); }
 .filters { display: flex; height: 37px; min-height: 37px; border-bottom: 1px solid var(--line); margin: 0 16px; gap: 7px; }
 .filters button { position: relative; flex: 1; padding: 0 4px 9px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .filters button:hover { color: var(--text); }
 .filters .selected { color: var(--text); font-weight: 600; }
+.filter-count { margin-left: 5px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .filters .selected::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: var(--accent); }
 .board { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #afb7bf55 transparent; scrollbar-gutter: stable; padding: 0 10px 0 16px; }
 .project { border-bottom: 1px solid var(--line); padding: 10px 0 0; }
@@ -132,9 +131,6 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
 .detail-status .status { margin-left: 0; }
 .task-details h3 { font-size: 16px; line-height: 1.6; font-weight: 600; margin: 10px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .detail-progress { font-size: 13px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
-.summary { gap: 9px; font-size: 14px; }
-.review-summary { color: var(--accent); margin-left: auto; font-size: 12px; white-space: nowrap; }
-.review-summary:hover { text-decoration: underline; }
 .footer-create { color: var(--accent); font-size: 12px; font-weight: 600; padding: 6px 0; }
 .empty-create { margin-top: 16px; }
 .task-signals { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; margin: 3px 0 5px; font-size: 10px; }

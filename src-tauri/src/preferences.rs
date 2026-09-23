@@ -37,7 +37,7 @@ impl Default for Preferences {
 impl Preferences {
     pub fn validate(&self) -> Result<(), String> {
         if !["light", "dark"].contains(&self.theme.as_str())
-            || !["all", "in_progress", "blocked", "todo", "review"].contains(&self.filter.as_str())
+            || !["all", "attention", "in_progress", "blocked", "todo", "review"].contains(&self.filter.as_str())
             || ![0, 1, 4, 8, 24, 48, 168].contains(&self.stale_after_hours)
             || self.focused_project.is_some_and(|id| id <= 0)
             || self.pinned_projects.iter().any(|id| *id <= 0)
@@ -99,6 +99,18 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn attention_filter_is_valid_and_legacy_filters_still_load() {
+        for filter in ["attention", "blocked", "todo", "review"] {
+            Preferences {
+                filter: filter.into(),
+                ..Default::default()
+            }
+            .validate()
+            .unwrap();
+        }
     }
 
     #[test]
