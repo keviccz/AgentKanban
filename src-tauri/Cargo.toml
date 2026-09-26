@@ -3,6 +3,7 @@ name = "agentkanban"
 version = "0.6.0"
 description = "A local desktop task board maintained by coding agents"
 edition = "2021"
+license = "MIT"
 default-run = "agentkanban"
 
 [build-dependencies]

@@ -14,6 +14,7 @@ Agent 推进，你来验收。
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-MCP%20server-B7410E?logo=rust&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-stdio-6b4fbb)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **中文** · [English](README.en.md)
 
@@ -162,6 +163,10 @@ src                  浮窗界面（React 19 + TypeScript）
 - [更新与发布](docs/UPDATES.md)：签名构建与 GitHub 草稿发布
 - [验收记录](docs/VERIFICATION.md)
 - [版本说明](docs/RELEASE_NOTES.md)
+
+## 许可证
+
+代码以 [MIT](LICENSE) 许可证开源。内置字体各自遵循其许可：Manrope 与 Geist Mono 为 SIL OFL，HarmonyOS Sans 按其许可协议原样分发（协议全文见 `src/fonts/`），不在 MIT 范围内。
 
 ## 致谢
 

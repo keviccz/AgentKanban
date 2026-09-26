@@ -14,6 +14,7 @@ Agents do the work. You sign off.
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-MCP%20server-B7410E?logo=rust&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-stdio-6b4fbb)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 [中文](README.md) · **English**
 
@@ -162,6 +163,10 @@ The detailed docs are in Chinese:
 - [Updates and releases](docs/UPDATES.md): signed builds and GitHub draft releases
 - [Verification log](docs/VERIFICATION.md)
 - [Release notes](docs/RELEASE_NOTES.md)
+
+## License
+
+The code is released under the [MIT](LICENSE) license. Bundled fonts keep their own licenses and are not covered by MIT: Manrope and Geist Mono are SIL OFL, and HarmonyOS Sans is redistributed unmodified under its own agreement (full text in `src/fonts/`).
 
 ## Acknowledgements
 
