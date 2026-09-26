@@ -1,9 +1,13 @@
 import type { ReactNode } from 'react';
 
-export type IconName = 'logo' | 'back' | 'pin' | 'sun' | 'moon' | 'list' | 'search' | 'refresh' | 'minus' | 'close' | 'chevron' | 'branch' | 'expand';
+export type IconName = 'logo' | 'back' | 'folder' | 'settings' | 'pause' | 'play' | 'pin' | 'sun' | 'moon' | 'list' | 'search' | 'refresh' | 'minus' | 'close' | 'chevron' | 'branch' | 'expand';
 export function Icon({ name, className = '' }: { name: IconName; className?: string }) {
   const paths: Record<Exclude<IconName, 'logo'>, ReactNode> = {
     back: <path d="M15 5l-7 7 7 7" />,
+    folder: <path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5Z" />,
+    pause: <><rect x="6.5" y="4.5" width="3.8" height="15" rx="1.2" /><rect x="13.7" y="4.5" width="3.8" height="15" rx="1.2" /></>,
+    play: <path d="M7 4.9v14.2a1 1 0 0 0 1.5.9l11.2-7.1a1 1 0 0 0 0-1.8L8.5 4a1 1 0 0 0-1.5.9Z" />,
+    settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" /></>,
     pin: <g transform="rotate(35 12 12)"><path d="M9 3h6m-5 0v6l-3 4v2h10v-2l-3-4V3M12 15v6" /></g>,
     sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></>,
     moon: <path d="M20.5 14A8.5 8.5 0 0 1 10 3.5 8.5 8.5 0 1 0 20.5 14Z" />,

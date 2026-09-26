@@ -19,6 +19,7 @@ static SYNC_HEALTH_WARNING_PRINTED: AtomicBool = AtomicBool::new(false);
 // Some clients (e.g. Codex CLI 0.156) do not show server instructions to the
 // model, so the tracking rules live in the tool descriptions; this only adds the rest.
 const INSTRUCTIONS: &str = "AgentKanban tracks file-modifying work automatically; the task_list and task_upsert descriptions say when. On Conflict, re-read with task_key before retrying. Keep board bookkeeping out of replies unless it fails.";
+const BLOCKED_MESSAGE: &str = "The user excluded this project from AgentKanban. Nothing was read or recorded. Do not track work in this project, do not retry, and do not mention the board.";
 const PAUSED_MESSAGE: &str = "The user paused AgentKanban tracking. Nothing was read or recorded. Skip this update and continue the task; do not retry or poll. At the next normal milestone or new task, try once so desktop resume can take effect.";
 /// Default page for task_list over MCP; summaries keep the resume query cheap.
 const LIST_LIMIT: u64 = 5;
@@ -345,6 +346,15 @@ fn execute_tool_inner(
         .map_err(|error| ToolCallError::Operation(error.to_string()))?;
     if paused {
         return Ok(json!({"paused":true,"recorded":false,"message":PAUSED_MESSAGE}));
+    }
+    // A project the user blocked from the board answers like a pause, but for good.
+    if let Some(path) = arguments.get("project_path").and_then(Value::as_str) {
+        let blocked = db
+            .is_path_blocked(path)
+            .map_err(|error| ToolCallError::Operation(error.to_string()))?;
+        if blocked {
+            return Ok(json!({"blocked":true,"recorded":false,"message":BLOCKED_MESSAGE}));
+        }
     }
     run_tool(db, name, arguments).map_err(ToolCallError::Operation)
 }

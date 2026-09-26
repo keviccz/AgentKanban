@@ -1,6 +1,7 @@
 //! Shared local storage for the desktop app and independent MCP processes.
 
 mod archive_center;
+mod blocking;
 mod onboarding;
 mod project;
 mod sync_health;
@@ -14,6 +15,7 @@ use std::{
 };
 
 pub use archive_center::ArchiveQuery;
+pub use blocking::BlockedProject;
 pub use project::{resolve_project, ProjectIdentity};
 pub use sync_health::{SyncEvent, SyncHealth, SyncOutcome, SyncTool, SyncTransport};
 
@@ -624,6 +626,8 @@ impl Database {
                    (SELECT COUNT(*) FROM tasks a WHERE a.project_id=p.id AND a.archived=1)
                  FROM projects p
                  WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.archived=0)
+                   AND p.identity NOT IN (SELECT value FROM json_each(
+                     COALESCE((SELECT value FROM settings WHERE key='blocked_projects'),'[]')))
                  ORDER BY name COLLATE NOCASE,id",
             )?;
             let rows = statement.query_map([], |row| {

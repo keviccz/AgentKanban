@@ -33,6 +33,10 @@ pub(crate) struct Preferences {
     pub project_sort: String,
     /// Interface language: "auto" follows Windows, or "zh" / "en".
     pub language: String,
+    /// How a task an Agent is actively advancing is shown; see ACTIVITY_STYLES in Activity.tsx.
+    pub activity_style: String,
+    /// An in-progress task counts as advancing for this many minutes after an Agent report.
+    pub activity_minutes: u32,
 }
 
 impl Default for Preferences {
@@ -59,6 +63,8 @@ impl Default for Preferences {
             auto_download_updates: false,
             project_sort: "recent".into(),
             language: "auto".into(),
+            activity_style: "pulse".into(),
+            activity_minutes: 30,
         }
     }
 }
@@ -87,7 +93,10 @@ impl Preferences {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if !["light", "dark"].contains(&self.theme.as_str())
+        if !["light", "dark", "system"].contains(&self.theme.as_str())
+            || !["pulse", "orbit", "dots", "wave", "shimmer", "flow", "glow", "off"]
+                .contains(&self.activity_style.as_str())
+            || ![10, 30, 60].contains(&self.activity_minutes)
             || ![
                 "all",
                 "attention",

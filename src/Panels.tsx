@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { backupDatabase, checkMcp, native, readClients, readDesktopSettings, readIntegrationInfo, revealPath, setAutostart, setShortcut, setupClient } from './bridge';
-import { type ClientStatus, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences } from './types';
+import { backupDatabase, checkMcp, dragWindow, native, readBlockedProjects, setProjectBlocked, readClients, readDesktopSettings, readIntegrationInfo, revealPath, setAutostart, setShortcut, setupClient } from './bridge';
+import { type BlockedProject, type ClientStatus, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences } from './types';
 import codexRule from '../examples/codex-AGENTS-snippet.md?raw';
 import harmonyLicense from './fonts/HarmonyOS-Sans-LICENSE.txt?raw';
 import { Updates } from './Updates';
 import { SyncHealth } from './SyncHealth';
 import { ArchiveCenter } from './ArchiveCenter';
+import { ACTIVITY_STYLES, ActivityLabel, ActivityMark, activityLabels } from './Activity';
 import { locale, t } from './i18n';
 
 export function Panel({ title, children, onClose, initialFocus, busy = false }: { title: string; children: ReactNode; onClose: () => void; initialFocus?: RefObject<HTMLInputElement | null>; busy?: boolean }) {
@@ -24,9 +25,36 @@ export function Panel({ title, children, onClose, initialFocus, busy = false }: 
     onClose();
   }
   return <dialog ref={dialog} className="panel" aria-label={title} onCancel={event => { event.preventDefault(); close(); }}>
-    <div className="panel-heading" data-tauri-drag-region><h2 data-tauri-drag-region>{title}</h2><button className="text-button" autoFocus={!initialFocus} disabled={busy} title={t("返回看板（Esc）")} onClick={event => close(event.detail > 0)}>{t("返回")}</button></div>
+    <div className="panel-heading" onMouseDown={dragWindow}><h2>{title}</h2><button className="text-button" autoFocus={!initialFocus} disabled={busy} title={t("返回看板（Esc）")} onClick={event => close(event.detail > 0)}>{t("返回")}</button></div>
     {children}
   </dialog>;
+}
+
+/** Projects the user excluded from the board; Agents working in them are not recorded. */
+function BlockedProjects({ onChanged }: { onChanged: () => void }) {
+  const [items, setItems] = useState<BlockedProject[] | null>(null);
+  const [error, setError] = useState('');
+  const [working, setWorking] = useState<number | null>(null);
+  async function load() {
+    if (!native) return;
+    try { setItems(await readBlockedProjects()); setError(''); }
+    catch (e) { setError(t("读取屏蔽项目失败：{0}", String(e))); }
+  }
+  useEffect(() => { void load(); }, []);
+  async function unblock(project: BlockedProject) {
+    setWorking(project.id); setError('');
+    try { await setProjectBlocked(project.id, false); onChanged(); await load(); }
+    catch (e) { setError(t("取消屏蔽失败：{0}", String(e))); }
+    finally { setWorking(null); }
+  }
+  return <section className="settings-section"><h3>{t("屏蔽的项目")}</h3>
+    <p className="hint">{t("在看板上右键项目可屏蔽。之后在该项目中工作的 Agent 不再记录到看板，已有任务保留，取消屏蔽后恢复显示。")}</p>
+    {!native ? null : items === null ? <p className="hint">{t("正在读取…")}</p> : items.length === 0 ? <p className="hint">{t("暂无屏蔽的项目。")}</p> : <ul className="client-list blocked-list">{items.map(project => <li key={project.id}>
+      <span className="client-name" title={project.path}>{project.name}<small>{project.path}</small></span>
+      <button className="text-button" disabled={working !== null} onClick={() => void unblock(project)}>{working === project.id ? t("正在取消…") : t("取消屏蔽")}</button>
+    </li>)}</ul>}
+    {error && <p className="panel-error" role="alert">{error}</p>}
+  </section>;
 }
 
 export function CopyButton({ text, label = t("复制"), copied = t("已复制"), title, onFailure }: { text: string; label?: string; copied?: string; title?: string; onFailure?: () => void }) {
@@ -65,7 +93,7 @@ function RangeSetting({ label, value, min, max, presets, unit = '%', disabled, c
 }
 const PRIMARY_CLIENTS = ['codex', 'claude', 'dsh'];
 
-export function Settings({ preferences, busy, disabled, saveError, update, onShortcutChanged, onClose }: { preferences: Preferences; busy: boolean; disabled: boolean; saveError: string; update: (patch: Partial<Preferences>) => void; onShortcutChanged: () => void; onClose: () => void }) {
+export function Settings({ preferences, busy, disabled, saveError, update, onShortcutChanged, onBoardChanged, onClose }: { preferences: Preferences; busy: boolean; disabled: boolean; saveError: string; update: (patch: Partial<Preferences>) => void; onShortcutChanged: () => void; onBoardChanged: () => void; onClose: () => void }) {
   const [tab, setTab] = useState<'desktop' | 'integration' | 'updates'>('desktop');
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
@@ -144,9 +172,14 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
       {tab === 'desktop' ? <>
         <section className="settings-section"><h3>{t("外观")}</h3>
           <label className="setting-row"><span>{t("语言")}<small>{locale() === 'en-US' ? '语言' : 'Language'}</small></span><select aria-label={t("语言")} value={preferences.language} disabled={disabled} onChange={event => update({ language: event.target.value === 'zh' || event.target.value === 'en' ? event.target.value : 'auto' })}><option value="auto">{t("跟随系统")}</option><option value="zh">中文</option><option value="en">English</option></select></label>
+          <label className="setting-row"><span>{t("主题")}</span><select aria-label={t("主题")} value={preferences.theme} disabled={disabled} onChange={event => update({ theme: event.target.value === 'dark' || event.target.value === 'light' ? event.target.value : 'system' })}><option value="system">{t("跟随系统")}</option><option value="light">{t("浅色")}</option><option value="dark">{t("深色")}</option></select></label>
           <label className="setting-row"><span>{t("项目排序")}<small>{t("置顶项目始终在前")}</small></span><select aria-label={t("项目排序")} value={preferences.project_sort} disabled={disabled} onChange={event => update({ project_sort: event.target.value === 'name' ? 'name' : 'recent' })}><option value="recent">{t("最近有更新的在前")}</option><option value="name">{t("按名称首字母")}</option></select></label>
           <RangeSetting label={t("字号")} value={preferences.font_scale} min={80} max={130} presets={[[t("小"), 85], [t("中"), 100], [t("大"), 115]]} disabled={disabled} commit={font_scale => update({ font_scale })} />
           <RangeSetting label={t("不透明度")} value={preferences.opacity} min={50} max={100} presets={[[t("不透明"), 100], [t("轻透"), 90], [t("半透"), 75]]} disabled={disabled} commit={opacity => update({ opacity })} />
+        </section>
+        <section className="settings-section"><h3>{t("Agent 推进提示")}</h3>
+          <label className="setting-row"><span>{t("动效")}<small className="activity-sample" aria-hidden="true"><span className="status in_progress advancing"><span className="status-dot" /><ActivityLabel /><ActivityMark /></span></small></span><select aria-label={t("推进动效")} value={preferences.activity_style} disabled={disabled} onChange={event => update({ activity_style: ACTIVITY_STYLES.find(style => style === event.target.value) ?? 'pulse' })}>{ACTIVITY_STYLES.map(style => <option key={style} value={style}>{t(activityLabels[style])}</option>)}</select></label>
+          <label className="setting-row"><span>{t("判定为推进中")}<small>{t("进行中，且 Agent 在此时间内有上报")}</small></span><select aria-label={t("判定为推进中")} value={preferences.activity_minutes} disabled={disabled || preferences.activity_style === 'off'} onChange={event => update({ activity_minutes: Number(event.target.value) })}>{[10, 30, 60].map(minutes => <option key={minutes} value={minutes}>{t("{0} 分钟内", minutes)}</option>)}</select></label>
         </section>
         <section className="settings-section"><h3>{t("随时查看")}</h3>
           <label className="setting-row"><span>{t("登录 Windows 时启动")}</span><input type="checkbox" checked={desktop?.autostart_enabled ?? false} disabled={!desktop || working || Boolean(desktop.autostart_error)} onChange={event => void toggle('autostart', event.target.checked)} /></label>
@@ -167,6 +200,7 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
         </section>
       </> : tab === 'updates' ? <Updates preferences={preferences} disabled={disabled} update={update} onLater={onClose} /> : <>
         <SyncHealth />
+        <BlockedProjects onChanged={onBoardChanged} />
         <section className="settings-section"><div className="section-heading"><h3>{t("本地连接")}</h3><button className="text-button" disabled={!native || working} onClick={() => void reload()}>{t("刷新诊断")}</button></div>
           {info ? <><p className={info.mcp_exists ? 'connection-ok' : 'panel-error'}>{info.mcp_exists ? t("已找到 MCP 程序") : t("未找到 MCP 程序，请检查安装目录")}</p>
             <dl className="diagnostics"><dt>{t("最近一次任务变更")}</dt><dd>{info.last_task_update ? new Date(info.last_task_update).toLocaleString(locale()) : t("尚无任务记录")}</dd><dt>{t("MCP 程序")} <button className="text-button" onClick={() => reveal('mcp')}>{t("打开位置")}</button></dt><dd>{info.mcp_path}</dd><dt>{t("数据库")} <button className="text-button" onClick={() => reveal('database')}>{t("打开位置")}</button></dt><dd>{info.database_path}</dd></dl>

@@ -866,3 +866,41 @@ fn mcp_raw_reports_and_partial_step_updates_preserve_input_and_version_boundarie
     assert!(report.get("steps").is_none());
     assert_eq!(report["step_updates"], json!([{"index":0,"status":"done"}]));
 }
+
+#[test]
+fn blocked_projects_are_skipped_without_reading_or_recording() {
+    let (root, db) = fixture();
+    let project = root.path().join("blocked-project");
+    std::fs::create_dir(&project).unwrap();
+    let path = project.to_str().unwrap();
+    let created = agentkanban_mcp::execute_tool(&db, "task_upsert", json!({
+        "project_path": path, "task_key": "blocked:first", "title": "t", "status": "todo", "progress": "p"
+    }))
+    .unwrap();
+    let project_id = db
+        .list(kanban_core::ListTasks { task_key: Some("blocked:first".into()), ..Default::default() })
+        .unwrap()
+        .items[0]
+        .task
+        .project_id;
+    db.set_project_blocked(project_id, true).unwrap();
+
+    for (tool, arguments) in [
+        ("task_upsert", json!({"project_path": path, "task_key": "blocked:second", "title": "t", "status": "todo", "progress": "p"})),
+        ("task_list", json!({"project_path": path})),
+        ("task_archive", json!({"project_path": path, "task_key": "blocked:first", "expected_updated_at": created["updated_at"]})),
+    ] {
+        let result = agentkanban_mcp::execute_tool(&db, tool, arguments).unwrap();
+        assert_eq!(result["blocked"], true, "{tool}");
+        assert_eq!(result["recorded"], false, "{tool}");
+    }
+    let keys: Vec<String> = db
+        .list(kanban_core::ListTasks { include_done: true, include_archived: true, ..Default::default() })
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|item| item.task.task_key)
+        .collect();
+    assert_eq!(keys, ["blocked:first"]);
+    assert!(!db.list(kanban_core::ListTasks { task_key: Some("blocked:first".into()), ..Default::default() }).unwrap().items[0].task.archived);
+}

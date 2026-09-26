@@ -1,9 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { archiveProject, archiveTask, compactWindow, hideWindow, listArchivedTasks, native, onError, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, readTrackingPaused, readWindowVisible, restoreArchivedTask, reviewTask, savePreferences, setTrackingPaused } from './bridge';
+import { archiveProject, archiveTask, compactWindow, dragWindow, setProjectBlocked, hideWindow, listArchivedTasks, native, onError, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, readTrackingPaused, readWindowVisible, restoreArchivedTask, reviewTask, savePreferences, setTrackingPaused } from './bridge';
 import { defaults, isTutorialProject, isTutorialTask, labels, type ArchivedTask, type CaptureInput, type Filter, type Preferences, type Project, type Snapshot, type Task, type TaskReceipt } from './types';
-import { awaitsReview, changedAt, inActiveList, isStale, matchesFilter, matchesSearch, needsAttention, normalizeFilter, relativeTime, reviewLabels, stepProgress } from './display';
+import { awaitsReview, changedAt, inActiveList, isAdvancing, isStale, matchesFilter, matchesSearch, needsAttention, normalizeFilter, relativeTime, reviewLabels, stepProgress } from './display';
 import { Settings } from './Panels';
 import { Icon } from './Icon';
+import { ActivityLabel, ActivityMark } from './Activity';
 import { CapturePanel, TaskDetails, type FeedbackDraft } from './Workflows';
 import { locale, resolveLanguage, setLanguage, t, type Language } from './i18n';
 
@@ -13,20 +14,20 @@ const SLOGAN = 'Agent 推进，你来验收。';
 type OpenMenu = (id: number, x: number, y: number) => void;
 
 // `language` is only a memo key: rows must re-render when the interface language changes.
-const TaskRow = memo(function TaskRow({ task, tutorial, concise, recent, now, staleHours, onOpen, onMenu }: { language: Language; task: Task; tutorial: boolean; concise: boolean; recent: boolean; now: number; staleHours: number; onOpen: (id: number) => void; onMenu: OpenMenu }) {
+const TaskRow = memo(function TaskRow({ task, tutorial, concise, recent, now, staleHours, advancing, onOpen, onMenu }: { language: Language; advancing: boolean; task: Task; tutorial: boolean; concise: boolean; recent: boolean; now: number; staleHours: number; onOpen: (id: number) => void; onMenu: OpenMenu }) {
   const timestamp = recent ? task.updated_at : task.agent_updated_at ?? task.updated_at;
   const timeTitle = t("{0}：{1}", recent ? t("最近变更") : !tutorial && task.agent_updated_at ? t("Agent 最后上报") : t("记录时间"), new Date(timestamp).toLocaleString(locale()));
   const pending = awaitsReview(task);
   const steps = concise ? '' : stepProgress(task);
   const statusLabel = concise && pending ? t("未验收") : concise && task.review_status === 'accepted' ? t("已验收") : t(labels[task.status]);
-  return <li className={`task task-${task.status} ${concise ? 'task-concise' : ''} ${recent ? 'task-recent' : ''}`} onContextMenu={event => {
+  return <li className={`task task-${task.status} ${concise ? 'task-concise' : ''} ${recent ? 'task-recent' : ''} ${advancing ? 'task-advancing' : ''}`} onContextMenu={event => {
     event.preventDefault();
     // The keyboard menu key reports no pointer position; anchor to the row instead.
     const box = event.currentTarget.getBoundingClientRect();
     onMenu(task.id, event.clientX || box.left + 24, event.clientY || box.top + 24);
   }}>
     <button className="task-open" aria-label={t("查看任务：{0}", task.title)} title={pending ? t("Agent 已完成，你尚未验收。右键可一键验收或归档") : undefined} onClick={() => onOpen(task.id)}>
-      <span className="task-heading"><span className="task-title" title={recent ? `${task.title}\n${timeTitle}` : task.title}>{task.title}</span><span className={`status ${task.status} ${concise && pending ? 'review-pending' : ''}`}><span className="status-dot" />{statusLabel}</span></span>
+      <span className="task-heading"><span className="task-title" title={recent ? `${task.title}\n${timeTitle}` : task.title}>{task.title}</span><span className={`status ${task.status} ${concise && pending ? 'review-pending' : ''} ${advancing ? 'advancing' : ''}`} title={advancing ? t("Agent 最近有上报，正在推进") : undefined}><span className="status-dot" />{advancing ? <ActivityLabel /> : statusLabel}{advancing && <ActivityMark />}</span></span>
       {!concise && <>
       <span className="progress" title={task.progress}>{task.progress || t("尚未补充进展")}</span>
       {(task.agent || task.review_status !== 'none' || task.needs_input || steps || task.review_withdrawn_at) && <span className="task-signals">{steps && <span className="step-count" title={t("计划步骤完成数")}>{steps} {t("步")}</span>}{task.review_withdrawn_at && <span className="review-badge withdrawn" title={t("Agent 在你验收前重新打开了任务")}>{t("已撤回验收")}</span>}{task.review_status !== 'none' && <span className={`review-badge ${task.review_status}`}>{t(reviewLabels[task.review_status])}</span>}{task.needs_input && <span className="input-signal">{t("需要你补充")}</span>}{task.agent && <span className="agent-name" title={tutorial ? t("教学示例") : t("最后上报：{0}", task.agent)}>{task.agent}</span>}</span>}
@@ -36,11 +37,12 @@ const TaskRow = memo(function TaskRow({ task, tutorial, concise, recent, now, st
   </li>;
 });
 
-function ProjectMenu({ project, x, y, onArchive, onClose }: { project: Project; x: number; y: number; onArchive: () => void; onClose: () => void }) {
-  // Archiving a whole project is a bigger step than one task, so it asks once more.
-  const [confirming, setConfirming] = useState(false);
+function ProjectMenu({ project, x, y, onArchive, onBlock, onClose }: { project: Project; x: number; y: number; onArchive: () => void; onBlock: () => void; onClose: () => void }) {
+  // Both act on a whole project, so each asks once more before it runs.
+  const [confirming, setConfirming] = useState<'archive' | 'block' | null>(null);
   return <FloatingMenu label={t("项目操作：{0}", project.name)} x={x} y={y} onClose={onClose}>
-    <button role="menuitem" className={confirming ? 'danger' : ''} title={t("该项目的任务移到归档，可在归档中心逐条恢复")} onClick={() => confirming ? onArchive() : setConfirming(true)}>{confirming ? t("确认归档 {0} 个任务？", project.tasks.length) : t("归档项目")}</button>
+    <button role="menuitem" className={confirming === 'archive' ? 'danger' : ''} title={t("该项目的任务移到归档，可在归档中心逐条恢复")} onClick={() => confirming === 'archive' ? onArchive() : setConfirming('archive')}>{confirming === 'archive' ? t("确认归档 {0} 个任务？", project.tasks.length) : t("归档项目")}</button>
+    <button role="menuitem" className={confirming === 'block' ? 'danger' : ''} title={t("之后在该项目中工作的 Agent 不再记录到看板；可在设置 → Agent 接入中取消")} onClick={() => confirming === 'block' ? onBlock() : setConfirming('block')}>{confirming === 'block' ? t("确认屏蔽该项目？") : t("屏蔽项目")}</button>
   </FloatingMenu>;
 }
 
@@ -133,7 +135,8 @@ function ProjectSection({ project, preferences, searching, update, now, busy, on
   const completed = preferences.completed_projects.includes(project.id);
   const pinned = preferences.pinned_projects.includes(project.id);
   const toggle = (key: 'collapsed_projects' | 'completed_projects' | 'pinned_projects') => update({ [key]: preferences[key].includes(project.id) ? preferences[key].filter(id => id !== project.id) : [...preferences[key], project.id] });
-  const heading = <><Icon name="chevron" className={!collapsed ? 'rotated' : ''} /><h2>{project.name}</h2><span className="project-count">{rows.length}</span></>;
+  const advancingIds = useMemo(() => new Set(preferences.activity_style === 'off' ? [] : project.tasks.filter(task => isAdvancing(task, preferences.activity_minutes, now)).map(task => task.id)), [project.tasks, preferences.activity_style, preferences.activity_minutes, now]);
+  const heading = <><Icon name="chevron" className={!collapsed ? 'rotated' : ''} /><h2>{project.name}</h2>{advancingIds.size > 0 && <span className="project-activity status in_progress advancing" title={t("{0} 个任务正在推进", advancingIds.size)}><span className="status-dot" /><ActivityMark /></span>}<span className="project-count">{rows.length}</span></>;
   return <section className="project" aria-label={project.name}>
     <div className="project-header" onContextMenu={event => {
       event.preventDefault();
@@ -141,8 +144,8 @@ function ProjectSection({ project, preferences, searching, update, now, busy, on
       onProjectMenu(project.id, event.clientX || box.left + 24, event.clientY || box.bottom);
     }}>{forceExpanded ? <div className="project-heading project-heading-static" title={t("{0}\n{1}视图临时展开，原折叠设置保留", project.path, recent ? t("最近变更") : t("搜索"))}>{heading}</div> : <button className="project-heading" disabled={busy} aria-expanded={!collapsed} title={project.path} onClick={() => toggle('collapsed_projects')}>{heading}</button>}<button className={`icon-button project-pin ${pinned ? 'is-pinned' : ''}`} aria-pressed={pinned} aria-label={t("{0}：{1}", pinned ? t("取消置顶项目") : t("置顶项目"), project.name)} title={recent ? t("最近变更视图按时间排序，原置顶设置保留") : pinned ? t("取消项目置顶") : t("将项目排在前面")} disabled={busy || recent} onClick={() => toggle('pinned_projects')}><Icon name="pin" /></button></div>
     {!collapsed && <div className="project-content">
-      <ul className="task-list">{rows.map(task => <TaskRow key={task.id} language={language} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={recent} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>
-      {!forceExpanded && preferences.filter === 'all' && done.length > 0 && <div className="completed"><button className="disclosure completed-toggle" disabled={busy} aria-expanded={completed} onClick={() => toggle('completed_projects')}><Icon name="chevron" className={completed ? 'rotated' : ''} />{t("已完成")} <span>{done.length}</span></button>{completed && <ul className="task-list">{done.map(task => <TaskRow key={task.id} language={language} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={false} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>}</div>}
+      <ul className="task-list">{rows.map(task => <TaskRow key={task.id} language={language} advancing={advancingIds.has(task.id)} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={recent} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>
+      {!forceExpanded && preferences.filter === 'all' && done.length > 0 && <div className="completed"><button className="disclosure completed-toggle" disabled={busy} aria-expanded={completed} onClick={() => toggle('completed_projects')}><Icon name="chevron" className={completed ? 'rotated' : ''} />{t("已完成")} <span>{done.length}</span></button>{completed && <ul className="task-list">{done.map(task => <TaskRow key={task.id} language={language} advancing={advancingIds.has(task.id)} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={false} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>}</div>}
       {native && !forceExpanded && preferences.filter === 'all' && project.archived_count > 0 && <ArchivedGroup project={project} busy={busy} onChanged={onChanged} />}
     </div>}
   </section>;
@@ -255,6 +258,14 @@ export function App() {
   const closeMenu = useCallback(() => setMenu(null), []);
   const openProjectMenu = useCallback<OpenMenu>((id, x, y) => { if (native) { setMenu(null); setProjectMenu({ id, x, y }); } }, []);
   const closeProjectMenu = useCallback(() => setProjectMenu(null), []);
+  async function blockProject(projectId: number) {
+    setProjectMenu(null);
+    if (taskActionBusy.current) return;
+    taskActionBusy.current = true;
+    try { await setProjectBlocked(projectId, true); await refreshAfterWrite(); }
+    catch (e) { setError(t("屏蔽项目失败：{0}", String(e))); }
+    finally { taskActionBusy.current = false; }
+  }
   async function archiveWholeProject(projectId: number) {
     setProjectMenu(null);
     if (taskActionBusy.current) return;
@@ -320,7 +331,15 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [ready, visible, refresh]);
 
-  useEffect(() => { document.documentElement.dataset.theme = preferences.theme; }, [preferences.theme]);
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-color-scheme: dark)');
+    const follow = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    query.addEventListener('change', follow);
+    return () => query.removeEventListener('change', follow);
+  }, []);
+  const theme = preferences.theme === 'system' ? systemDark ? 'dark' : 'light' : preferences.theme;
+  useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
   const reloadPause = useCallback(async () => {
     try { setPausedState(await readTrackingPaused()); setPauseReady(true); setPauseError(''); }
@@ -401,6 +420,7 @@ export function App() {
   // Recent order follows the project's newest task, whatever the status filter shows.
   const latestChange = useMemo(() => new Map(projectsInScope.map(project => [project.id, Math.max(0, ...project.tasks.map(changedAt))])), [projectsInScope]);
   const ongoing = allTasks.filter(task => task.status === 'in_progress').length;
+  const advancingCount = preferences.activity_style === 'off' ? 0 : allTasks.filter(task => isAdvancing(task, preferences.activity_minutes, now)).length;
   const attention = allTasks.filter(needsAttention).length;
   const filterCounts: Record<Filter, number | null> = { all: null, attention, in_progress: ongoing, recent: null };
   const visibleProjects = useMemo(() => projectsInScope.map(project => {
@@ -422,15 +442,15 @@ export function App() {
     if (ready && selectedTaskId !== null && !selectedTask) setSelectedTaskId(null);
   }, [ready, selectedTaskId, selectedTask]);
   const controls = <>
-    {!preferences.compact && <><button className={`icon-button ${preferences.always_on_top ? 'is-pinned' : ''}`} title={preferences.always_on_top ? t("取消置顶") : t("窗口置顶")} aria-label={preferences.always_on_top ? t("取消置顶") : t("窗口置顶")} aria-pressed={preferences.always_on_top} disabled={locked} onClick={() => void update({ always_on_top: !preferences.always_on_top })}><Icon name="pin" /></button><button className="icon-button" title={preferences.theme === 'light' ? t("切换深色") : t("切换浅色")} aria-label={preferences.theme === 'light' ? t("切换深色") : t("切换浅色")} disabled={locked} onClick={() => void update({ theme: preferences.theme === 'light' ? 'dark' : 'light' })}><Icon name={preferences.theme === 'light' ? 'moon' : 'sun'} /></button><button className={`icon-button view-toggle ${preferences.concise ? 'is-active' : ''}`} title={preferences.concise ? t("切换详细模式") : t("切换简洁模式：仅标题和状态")} aria-label={preferences.concise ? t("切换详细模式") : t("切换简洁模式")} aria-pressed={preferences.concise} disabled={locked} onClick={() => void update({ concise: !preferences.concise })}><Icon name="list" /></button></>}
+    {!preferences.compact && <><button className={`icon-button ${preferences.always_on_top ? 'is-pinned' : ''}`} title={preferences.always_on_top ? t("取消置顶") : t("窗口置顶")} aria-label={preferences.always_on_top ? t("取消置顶") : t("窗口置顶")} aria-pressed={preferences.always_on_top} disabled={locked} onClick={() => void update({ always_on_top: !preferences.always_on_top })}><Icon name="pin" /></button><button className="icon-button" title={theme === 'light' ? t("切换深色") : t("切换浅色")} aria-label={theme === 'light' ? t("切换深色") : t("切换浅色")} disabled={locked} onClick={() => void update({ theme: theme === 'light' ? 'dark' : 'light' })}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button><button className={`icon-button view-toggle ${preferences.concise ? 'is-active' : ''}`} title={preferences.concise ? t("切换详细模式") : t("切换简洁模式：仅标题和状态")} aria-label={preferences.concise ? t("切换详细模式") : t("切换简洁模式")} aria-pressed={preferences.concise} disabled={locked} onClick={() => void update({ concise: !preferences.concise })}><Icon name="list" /></button></>}
     <button className="icon-button" aria-label={preferences.compact ? t("展开看板") : t("收成窄条")} title={preferences.compact ? t("展开看板") : t("收成窄条")} disabled={busy} onClick={() => void toggleCompact()}><Icon name={preferences.compact ? 'expand' : 'minus'} /></button>
     <button className="icon-button close-button" aria-label={t("隐藏到托盘")} title={native ? t("隐藏到托盘（从托盘恢复）") : t("浏览器预览不能隐藏到托盘")} disabled={!native} onClick={() => void hideWindow().catch(e => setError(String(e)))}><Icon name="close" /></button>
   </>;
 
-  return <main className={`app ${preferences.compact ? 'compact' : ''} ${preferences.concise ? 'concise' : ''}`}>
-    <header className="titlebar" data-tauri-drag-region>
-      <div className="brand" data-tauri-drag-region><Icon name="logo" /><span data-tauri-drag-region>AgentKanban</span></div>
-      {preferences.compact && <div className="strip-counts" data-tauri-drag-region><span className="in_progress">{ongoing} {t("进行中")}</span><span className="blocked">{attention} {t("等你处理")}</span>{trackingPaused && <span className="paused-chip" title={t("Agent 记录已暂停")}>{t("已暂停")}</span>}</div>}
+  return <main className={`app ${preferences.compact ? 'compact' : ''} ${preferences.concise ? 'concise' : ''}`} data-activity={preferences.activity_style}>
+    <header className="titlebar" onMouseDown={dragWindow}>
+      <div className="brand"><Icon name="logo" /><span>AgentKanban</span></div>
+      {preferences.compact && <div className="strip-counts"><span className="in_progress strip-ongoing" title={advancingCount ? t("{0} 个任务正在推进", advancingCount) : undefined}>{advancingCount > 0 && <span className="project-activity status in_progress advancing"><span className="status-dot" /><ActivityMark /></span>}{ongoing} {t("进行中")}</span><span className="blocked">{attention} {t("等你处理")}</span>{trackingPaused && <span className="paused-chip" title={t("Agent 记录已暂停")}>{t("已暂停")}</span>}</div>}
       <div className="window-actions">{controls}</div>
     </header>
     {!preferences.compact && <>
@@ -443,12 +463,12 @@ export function App() {
         {recent && <p className="board-view-hint">{t("按最近变更排序并临时展开，含 Agent 和用户操作；此视图不按置顶排序。")}</p>}
         {!ready ? <div className="empty"><p>{t("正在读取看板…")}</p></div> : visibleProjects.length ? visibleProjects.map(project => <ProjectSection key={project.id} project={project} preferences={preferences} searching={searching} update={p => void update(p)} now={now} busy={locked} onOpen={setSelectedTaskId} onMenu={openMenu} onProjectMenu={openProjectMenu} onChanged={refreshAfterWrite} />) : <div className="empty"><Icon name="logo" /><h2>{searching ? t("没有匹配的任务") : snapshot.projects.length ? t("没有{0}的任务", preferences.filter === 'all' ? '' : t(filterLabels[preferences.filter])) : t(SLOGAN)}</h2>{searching ? <><p>{t("已搜索全部项目，当前状态筛选为“{0}”。", t(filterLabels[preferences.filter]))}</p><button className="outline-button empty-create" onClick={() => { setSearchText(''); searchInput.current?.focus(); }}>{t("清空搜索")}</button></> : snapshot.projects.length && preferences.filter !== 'all' ? <button className="outline-button empty-create" disabled={locked} onClick={() => void update({ filter: 'all' })}>{t("查看全部")}</button> : <button className="outline-button empty-create" disabled={!native} onClick={openCapture}>{t("新建任务")}</button>}{!native && <p className="preview-note">{t("浏览器布局预览 · 请启动桌面版连接本地看板")}</p>}</div>}
       </div>
-      <footer><button className="footer-create" disabled={!native} title={t("新建任务（Ctrl+Alt+N；窗口内 Ctrl+N）")} onClick={openCapture}>{t("＋ 新建")}</button>{!native ? <span title={t("浏览器预览不连接本地看板。")}>{t("布局预览")}</span> : <button className={`footer-pause ${trackingPaused ? 'is-paused' : ''}`} aria-pressed={trackingPaused} disabled={pauseBusy || !pauseReady} title={trackingPaused ? t("下个正常里程碑或新任务恢复尝试，不回补暂停期间") : t("暂停后看板工具停止读写，Agent 照常工作")} onClick={() => void togglePause()}>{!pauseReady ? t("记录状态未读取") : trackingPaused ? t("继续记录") : t("暂停记录")}</button>}<button className="footer-settings" onClick={() => setSettingsOpen(true)}>{t("设置")}</button></footer>
+      <footer><button className="footer-create" disabled={!native} title={t("新建任务（Ctrl+Alt+N；窗口内 Ctrl+N）")} onClick={openCapture}>{t("＋ 新建")}</button>{!native ? <span className="footer-middle" title={t("浏览器预览不连接本地看板。")}>{t("布局预览")}</span> : <button className={`icon-button footer-pause ${trackingPaused ? 'is-paused' : ''}`} aria-pressed={trackingPaused} aria-label={!pauseReady ? t("记录状态未读取") : trackingPaused ? t("继续记录") : t("暂停记录")} disabled={pauseBusy || !pauseReady} title={!pauseReady ? t("记录状态未读取") : trackingPaused ? t("{0}：{1}", t("继续记录"), t("下个正常里程碑或新任务恢复尝试，不回补暂停期间")) : t("{0}：{1}", t("暂停记录"), t("暂停后看板工具停止读写，Agent 照常工作"))} onClick={() => void togglePause()}><Icon name={trackingPaused ? 'play' : 'pause'} /></button>}<button className="icon-button footer-settings" aria-label={t("设置")} title={t("设置")} onClick={() => setSettingsOpen(true)}><Icon name="settings" /></button></footer>
     </>}
     {preferences.compact && (error || pauseError) && <span className="compact-error" title={[error, pauseError].filter(Boolean).join(t("；"))} role="alert">!</span>}
-    {projectMenu && menuProject && !preferences.compact && <ProjectMenu key={`${projectMenu.id}:${projectMenu.x}:${projectMenu.y}`} project={menuProject} x={projectMenu.x} y={projectMenu.y} onArchive={() => void archiveWholeProject(menuProject.id)} onClose={closeProjectMenu} />}
+    {projectMenu && menuProject && !preferences.compact && <ProjectMenu key={`${projectMenu.id}:${projectMenu.x}:${projectMenu.y}`} project={menuProject} x={projectMenu.x} y={projectMenu.y} onArchive={() => void archiveWholeProject(menuProject.id)} onBlock={() => void blockProject(menuProject.id)} onClose={closeProjectMenu} />}
     {menu && menuTask && !preferences.compact && <TaskMenu key={`${menu.id}:${menu.x}:${menu.y}`} task={menuTask} x={menu.x} y={menu.y} onAct={action => void menuAction(menuTask, action)} onClose={closeMenu} />}
-    {settingsOpen && <Settings preferences={preferences} busy={busy} disabled={locked} saveError={error} update={patch => void update(patch)} onShortcutChanged={() => void reloadPreferences().catch(e => setError(String(e)))} onClose={() => setSettingsOpen(false)} />}
+    {settingsOpen && <Settings preferences={preferences} busy={busy} disabled={locked} saveError={error} update={patch => void update(patch)} onShortcutChanged={() => void reloadPreferences().catch(e => setError(String(e)))} onBoardChanged={() => void refreshAfterWrite()} onClose={() => setSettingsOpen(false)} />}
     {captureOpen && captureDraft && <CapturePanel draft={captureDraft} projects={snapshot.projects} onChange={setCaptureDraft} onCreated={onCreated} onClose={() => setCaptureOpen(false)} />}
     {selectedTask && selectedProject && <TaskDetails key={selectedTask.id} task={selectedTask} project={selectedProject} preferences={preferences} now={now} draft={feedbackDrafts[selectedTask.id]} onDraftChange={draft => setFeedbackDrafts(previous => { const next = { ...previous }; if (draft) next[selectedTask.id] = draft; else delete next[selectedTask.id]; return next; })} onBusyChange={value => { taskActionBusy.current = value; }} onChanged={refreshAfterWrite} onClose={() => setSelectedTaskId(null)} />}
   </main>;

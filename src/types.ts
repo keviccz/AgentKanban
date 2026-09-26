@@ -1,3 +1,4 @@
+import type { ActivityStyle } from './Activity';
 export type Status = 'todo' | 'in_progress' | 'blocked' | 'done';
 export type Filter = 'all' | 'attention' | 'in_progress' | 'recent';
 export type ReviewStatus = 'none' | 'pending' | 'accepted' | 'changes_requested';
@@ -19,6 +20,7 @@ export interface CaptureInput { project_path: string; task_key: string; title: s
 export interface ArchivedTask extends Task { project_name: string; project_path: string }
 export interface ArchiveQuery { query?: string; project_id?: number; limit?: number; offset?: number }
 export interface ArchivePage { items: ArchivedTask[]; next_offset: number | null }
+export interface BlockedProject { id: number; name: string; path: string }
 export interface Project { id: number; name: string; path: string; tasks: Task[]; archived_count: number }
 export const isTutorialTask = (project: Pick<Project, 'name'>, task: Pick<Task, 'agent' | 'task_key'>) => project.name === '新手教程'
   && task.agent === '教学示例'
@@ -26,7 +28,7 @@ export const isTutorialTask = (project: Pick<Project, 'name'>, task: Pick<Task, 
 export const isTutorialProject = (project: Project) => project.tasks.length > 0 && project.tasks.every(task => isTutorialTask(project, task));
 export interface Snapshot { revision: number; projects: Project[] }
 export interface Preferences {
-  theme: 'light' | 'dark'; always_on_top: boolean; compact: boolean; concise: boolean; filter: Filter;
+  theme: 'light' | 'dark' | 'system'; always_on_top: boolean; compact: boolean; concise: boolean; filter: Filter;
   collapsed_projects: number[]; expanded_projects: number[]; completed_projects: number[];
   focused_project: number | null; pinned_projects: number[];
   stale_after_hours: number; shortcut_enabled: boolean;
@@ -35,6 +37,7 @@ export interface Preferences {
   auto_check_updates: boolean; auto_download_updates: boolean;
   project_sort: 'recent' | 'name';
   language: 'auto' | 'zh' | 'en';
+  activity_style: ActivityStyle; activity_minutes: number;
 }
 export const defaults: Preferences = {
   theme: 'light', always_on_top: true, compact: false, concise: false, filter: 'all',
@@ -45,6 +48,7 @@ export const defaults: Preferences = {
   auto_check_updates: true, auto_download_updates: false,
   project_sort: 'recent',
   language: 'auto',
+  activity_style: 'pulse', activity_minutes: 30,
 };
 export interface IntegrationInfo {
   app_version: string; mcp_path: string; mcp_exists: boolean; database_path: string;

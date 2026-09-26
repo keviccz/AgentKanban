@@ -1,7 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { defaults, type CaptureInput, type ClientStatus, type TaskReport, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt, type UpdateStatus, type SyncHealth, type ArchiveQuery, type ArchivePage } from './types';
+import { defaults, type CaptureInput, type ClientStatus, type TaskReport, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt, type UpdateStatus, type SyncHealth, type ArchiveQuery, type ArchivePage, type BlockedProject } from './types';
 
 export const native = isTauri();
 // Browser mode is only a layout preview. It never creates sample tasks or pretends to save them.
@@ -29,6 +29,19 @@ export const readWindowVisible = (): Promise<boolean> => native ? getCurrentWind
 export const createTask = (input: CaptureInput): Promise<TaskReceipt> => invoke('create_task', { input });
 export const reviewTask = (id: number, expected_updated_at: string, accepted: boolean, note: string): Promise<TaskReceipt> => invoke('review_task', { input: { id, expected_updated_at, accepted, note } });
 export const sendFeedback = (id: number, expected_updated_at: string, note: string): Promise<TaskReceipt> => invoke('send_task_feedback', { input: { id, expected_updated_at, note } });
+export const pickProjectFolder = (title: string, start?: string): Promise<string | null> => invoke('pick_project_folder', { title, start: start || null });
+export const setProjectBlocked = (projectId: number, blocked: boolean): Promise<void> => invoke('set_project_blocked', { projectId, blocked });
+export const readBlockedProjects = (): Promise<BlockedProject[]> => invoke('get_blocked_projects');
+/**
+ * Our own drag handle. Tauri's drag region toggles maximize on double-click, and the
+ * board is not meant to maximize: afterwards the window could no longer be dragged.
+ */
+export function dragWindow(event: { button: number; target: EventTarget | null; preventDefault(): void }) {
+  if (!native || event.button !== 0) return;
+  if (event.target instanceof Element && event.target.closest('button, a, input, select, textarea, summary')) return;
+  event.preventDefault();
+  void getCurrentWindow().startDragging();
+}
 export const archiveProject = (projectId: number): Promise<number> => invoke('archive_project', { projectId });
 export const archiveTask = (id: number, expected_updated_at: string): Promise<TaskReceipt> => invoke('archive_task', { input: { id, expected_updated_at } });
 export const readTrackingPaused = (): Promise<boolean> => native ? invoke('get_tracking_paused') : Promise.resolve(false);

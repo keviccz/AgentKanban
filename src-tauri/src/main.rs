@@ -169,6 +169,31 @@ fn archive_task(state: State<AppState>, input: ArchiveById) -> Result<TaskReceip
     state.db.archive_by_id(input).map_err(error)
 }
 
+/// Folder picker for the new-task panel. It only returns a path; creating the task
+/// still validates that the directory exists.
+#[tauri::command(async)]
+fn pick_project_folder(window: WebviewWindow, title: String, start: Option<String>) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut dialog = window.dialog().file().set_title(title).set_parent(&window);
+    if let Some(start) = start.filter(|path| std::path::Path::new(path).is_dir()) {
+        dialog = dialog.set_directory(start);
+    }
+    dialog
+        .blocking_pick_folder()
+        .and_then(|folder| folder.into_path().ok())
+        .map(|path| path.display().to_string())
+}
+
+#[tauri::command(async)]
+fn set_project_blocked(state: State<AppState>, project_id: i64, blocked: bool) -> Result<(), String> {
+    state.db.set_project_blocked(project_id, blocked).map_err(error)
+}
+
+#[tauri::command(async)]
+fn get_blocked_projects(state: State<AppState>) -> Result<Vec<kanban_core::BlockedProject>, String> {
+    state.db.blocked_projects().map_err(error)
+}
+
 #[tauri::command(async)]
 fn archive_project(state: State<AppState>, project_id: i64) -> Result<usize, String> {
     state.db.archive_project(project_id).map_err(error)
@@ -695,6 +720,7 @@ fn run() -> tauri::Result<()> {
         .unwrap_or_else(|| "AgentKanban".into());
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_window(app)
         }))
@@ -901,6 +927,9 @@ fn run() -> tauri::Result<()> {
             send_task_feedback,
             archive_task,
             archive_project,
+            set_project_blocked,
+            get_blocked_projects,
+            pick_project_folder,
             list_archived_tasks,
             restore_archived_task,
             get_tracking_paused,

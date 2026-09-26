@@ -19,6 +19,7 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["io-util", "process", "time"] }
 toml = "0.8"
 tauri-plugin-updater = "2"

@@ -15,6 +15,10 @@ export function isStale(task: Task, hours: number, now: number) {
     && now - Date.parse(task.agent_updated_at ?? task.updated_at) >= hours * 3_600_000;
 }
 
+// The board has no live connection to an Agent; a recent report on an in-progress task is the best signal.
+export const isAdvancing = (task: Task, minutes: number, now: number) => task.status === 'in_progress'
+  && task.agent_updated_at !== null && now - Date.parse(task.agent_updated_at) < minutes * 60_000;
+
 export const awaitsReview = (task: Task) => task.status === 'done' && task.review_status === 'pending';
 // Done means finished: an unreviewed delivery turns grey with the rest, and reviewing it is optional.
 export const inActiveList = (task: Task) => task.status !== 'done';

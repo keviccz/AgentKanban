@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { archiveTask, createTask, native, openExternalLink, readHandoff, readTaskReports, reviewTask, sendFeedback } from './bridge';
+import { archiveTask, createTask, pickProjectFolder, native, openExternalLink, readHandoff, readTaskReports, reviewTask, sendFeedback } from './bridge';
 import { awaitsReview, isStale, relativeTime, reviewLabels, stepProgress } from './display';
 import { CopyButton, Panel } from './Panels';
 import { isTutorialProject, isTutorialTask, labels, type CaptureInput, type Deliverable, type Preferences, type Project, type Status, type Step, type Task, type TaskReceipt, type TaskReport } from './types';
 import { locale, t } from './i18n';
+import { Icon } from './Icon';
 
 export function CapturePanel({ draft, projects, onChange, onCreated, onClose }: {
   draft: CaptureInput; projects: Project[]; onChange: (draft: CaptureInput) => void;
@@ -30,17 +31,58 @@ export function CapturePanel({ draft, projects, onChange, onCreated, onClose }: 
       <fieldset disabled={working}>
       <p className="hint">{t("先记下要做的事，再把开工说明交给 Agent。")}</p>
       <label className="form-field">{t("任务标题")}<input ref={titleInput} required maxLength={200} value={draft.title} onChange={event => onChange({ ...draft, title: event.target.value })} placeholder={t("例如：补齐导出功能的边界情况")} /></label>
-      <label className="form-field">{t("项目目录")}<input required list="project-paths" value={draft.project_path} onChange={event => onChange({ ...draft, project_path: event.target.value })} placeholder={t("选择已有项目，或输入完整目录路径")} spellCheck={false} /></label>
-      <datalist id="project-paths">{projects.filter(project => !isTutorialProject(project)).map(project => <option key={project.id} value={project.path}>{project.name}</option>)}</datalist>
+      <ProjectPathField value={draft.project_path} projects={projects.filter(project => !isTutorialProject(project))} onChange={project_path => onChange({ ...draft, project_path })} />
       <p className="field-hint">{t("使用本机已有目录；同一仓库的 worktree 会归入同一项目。")}</p>
       <label className="form-field">{t("需求与完成标准")} <span className="optional">{t("可选")}</span><textarea aria-label={t("需求与完成标准")} maxLength={2000} rows={5} value={draft.request} onChange={event => onChange({ ...draft, request: event.target.value })} placeholder={t("要达到什么效果？有什么限制？如何确认完成？")} /></label>
       {error && <p className="panel-error" role="alert">{error}</p>}
       {!native && <p className="hint">{t("浏览器只预览布局，创建任务请使用桌面版。")}</p>}
-      <div className="form-actions"><button className="primary-button" type="submit" disabled={!native || working || !draft.title.trim() || !draft.project_path.trim()}>{working ? t("正在保存…") : t("创建待办")}</button><span className="hint">{t("Ctrl + Enter 保存")}</span></div>
-      <p className="hint">{t("关闭面板会保留本次未提交的内容，退出程序后不保留。")}</p>
+      <div className="form-actions end"><span className="hint">{t("Ctrl + Enter 保存")}</span><button className="primary-button" type="submit" disabled={!native || working || !draft.title.trim() || !draft.project_path.trim()}>{working ? t("正在保存…") : t("创建待办")}</button></div>
+      <p className="hint capture-note">{t("关闭面板会保留本次未提交的内容，退出程序后不保留。")}</p>
       </fieldset>
     </form>
   </Panel>;
+}
+
+/** Path input with a styled list of known projects and a native folder picker. */
+function ProjectPathField({ value, projects, onChange }: { value: string; projects: Project[]; onChange: (path: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const [picking, setPicking] = useState(false);
+  const field = useRef<HTMLDivElement>(null);
+  const query = value.trim().toLowerCase();
+  // An exact pick shows the whole list again; typing narrows it.
+  const matches = projects.filter(project => !query || projects.some(p => p.path.toLowerCase() === query) || project.path.toLowerCase().includes(query) || project.name.toLowerCase().includes(query));
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => { if (!(event.target instanceof Node && field.current?.contains(event.target))) setOpen(false); };
+    window.addEventListener('pointerdown', outside, true);
+    return () => window.removeEventListener('pointerdown', outside, true);
+  }, [open]);
+  function choose(path: string) { onChange(path); setOpen(false); setActive(-1); }
+  async function browse() {
+    setPicking(true);
+    try { const path = await pickProjectFolder(t("选择项目目录"), value.trim()); if (path) choose(path); }
+    finally { setPicking(false); }
+  }
+  return <div className="form-field path-field" ref={field}>
+    <label htmlFor="capture-path">{t("项目目录")}</label>
+    <div className="path-row">
+      <div className={`path-combo ${open ? 'is-open' : ''}`}>
+        <input id="capture-path" required role="combobox" aria-expanded={open} aria-controls="capture-path-list" aria-autocomplete="list" autoComplete="off" value={value} spellCheck={false} placeholder={t("选择已有项目，或输入完整目录路径")}
+          onChange={event => { onChange(event.target.value); setOpen(true); setActive(-1); }}
+          onKeyDown={event => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault(); setOpen(true);
+              setActive(index => matches.length ? (index + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length : -1);
+            } else if (event.key === 'Enter' && open && active >= 0 && matches[active]) { event.preventDefault(); choose(matches[active].path); }
+            else if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); }
+          }} />
+        {projects.length > 0 && <button type="button" className="icon-button path-toggle" tabIndex={-1} aria-label={t("已有项目")} title={t("已有项目")} onClick={() => setOpen(value => !value)}><Icon name="expand" /></button>}
+      </div>
+      <button type="button" className="outline-button path-browse" disabled={!native || picking} title={t("在文件管理器中选择文件夹")} onClick={() => void browse()}><Icon name="folder" />{t("浏览…")}</button>
+    </div>
+    {open && matches.length > 0 && <ul id="capture-path-list" className="path-list" role="listbox">{matches.map((project, index) => <li key={project.id} role="option" aria-selected={index === active} className={index === active ? 'is-active' : ''} onPointerDown={event => { event.preventDefault(); choose(project.path); }}><strong>{project.name}</strong><span>{project.path}</span></li>)}</ul>}
+  </div>;
 }
 
 const isWebLink = (value: string) => {
