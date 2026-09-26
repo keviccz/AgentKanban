@@ -1,6 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { defaults, type CaptureInput, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt } from './types';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { defaults, type CaptureInput, type ClientStatus, type TaskReport, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt } from './types';
 
 export const native = isTauri();
 // Browser mode is only a layout preview. It never creates sample tasks or pretends to save them.
@@ -17,6 +18,14 @@ export const readDesktopSettings = (): Promise<DesktopSettings> => invoke('get_d
 export const setAutostart = (enabled: boolean): Promise<DesktopSettings> => invoke('set_autostart', { enabled });
 export const setShortcut = (enabled: boolean): Promise<DesktopSettings> => invoke('set_shortcut_enabled', { enabled });
 export const checkMcp = (): Promise<McpCheck> => invoke('check_mcp');
+export const readClients = (): Promise<ClientStatus[]> => invoke('get_clients');
+export const setupClient = (id: string): Promise<ClientStatus> => invoke('setup_client', { id });
+export const revealPath = (target: 'mcp' | 'database'): Promise<void> => invoke('reveal_path', { target });
+export const backupDatabase = (): Promise<string> => invoke('backup_database');
+export const previewAppearance = (fontScale: number, opacity: number): Promise<void> => native ? invoke('preview_appearance', { fontScale, opacity }) : Promise.resolve();
+export const readTaskReports = (id: number): Promise<TaskReport[]> => invoke('get_task_reports', { id });
+// The board may start in the tray at sign-in; polling waits until it is shown.
+export const readWindowVisible = (): Promise<boolean> => native ? getCurrentWindow().isVisible() : Promise.resolve(true);
 export const createTask = (input: CaptureInput): Promise<TaskReceipt> => invoke('create_task', { input });
 export const reviewTask = (id: number, expected_updated_at: string, accepted: boolean, note: string): Promise<TaskReceipt> => invoke('review_task', { input: { id, expected_updated_at, accepted, note } });
 export const sendFeedback = (id: number, expected_updated_at: string, note: string): Promise<TaskReceipt> => invoke('send_task_feedback', { input: { id, expected_updated_at, note } });

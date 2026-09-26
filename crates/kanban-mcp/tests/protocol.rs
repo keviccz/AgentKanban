@@ -458,8 +458,15 @@ fn v04_tool_descriptions_carry_tracking_rules_and_stay_small() {
     assert!(tools[0]["description"]
         .as_str()
         .unwrap()
-        .contains("milestones"));
-    assert!(tools.to_string().len() < 4300);
+        .contains("completed steps"));
+    assert!(tools[0]["inputSchema"]["properties"]["acceptance"].is_object());
+    assert!(list.contains("has_user_note"));
+    // Bound schema growth in bytes; token cost depends on the client/tokenizer.
+    assert!(
+        tools.to_string().len() < 5600,
+        "{} schema bytes",
+        tools.to_string().len()
+    );
 }
 
 #[test]
@@ -495,7 +502,7 @@ fn v04_pause_applies_to_running_sessions_without_writing_and_resumes() {
         assert!(result["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("Do not call"));
+            .contains("do not retry or poll"));
     }
     assert_eq!(db.revision().unwrap(), revision);
     assert_eq!(db.board().unwrap().projects[0].tasks.len(), 1);
@@ -521,4 +528,161 @@ fn v04_pause_applies_to_running_sessions_without_writing_and_resumes() {
         resumed["structuredContent"]["items"][0]["task_key"],
         "auto:pause"
     );
+}
+
+#[test]
+fn targeted_summaries_flag_hidden_requirements_and_keep_full_text_in_exact_reads() {
+    let (root, db) = fixture();
+    let captured = db
+        .capture(kanban_core::CaptureTask {
+            project_path: root.path().to_str().unwrap().into(),
+            task_key: "user:keyword".into(),
+            title: "用户任务".into(),
+            request: "需求中的 50%_\\ 特殊词".into(),
+        })
+        .unwrap();
+    let mut server = Server::new(db.clone());
+    server.handle(initialize("2025-11-25"));
+    let long = "字".repeat(121);
+    let write = call(
+        &mut server,
+        2,
+        "task_upsert",
+        json!({
+            "project_path":root.path(),"task_key":"user:keyword","title":"用户任务",
+            "status":"in_progress","progress":long,"expected_updated_at":captured.updated_at,
+        }),
+    );
+    assert_eq!(write["isError"], false);
+    let page = call(
+        &mut server,
+        3,
+        "task_list",
+        json!({"project_path":root.path(),"query":"%_\\"}),
+    );
+    let page = &page["structuredContent"];
+    assert!(page["project_path"].is_string());
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    let item = &page["items"][0];
+    assert!(item.get("project_path").is_none());
+    assert_eq!(item["has_request"], true);
+    assert_eq!(item["progress_truncated"], true);
+    assert_eq!(item["progress"].as_str().unwrap().chars().count(), 120);
+    assert!(item["updated_at"].is_string());
+    let full = call(
+        &mut server,
+        4,
+        "task_list",
+        json!({"project_path":root.path(),"task_key":"user:keyword"}),
+    );
+    assert_eq!(full["structuredContent"]["items"][0]["progress"], long);
+    assert_eq!(
+        full["structuredContent"]["items"][0]["request"],
+        "需求中的 50%_\\ 特殊词"
+    );
+    let unscoped = call(&mut server, 5, "task_list", json!({"query":"%_\\"}));
+    assert!(unscoped["structuredContent"]["items"][0]["project_path"].is_string());
+}
+
+#[test]
+fn exact_identity_reads_include_done_and_archived_unless_explicitly_excluded() {
+    let (root, db) = fixture();
+    let mut server = Server::new(db);
+    server.handle(initialize("2025-11-25"));
+    let created = call(
+        &mut server,
+        2,
+        "task_upsert",
+        json!({"project_path":root.path(),"task_key":"done","title":"完成任务","status":"done","progress":"已完成"}),
+    );
+    for query in [
+        json!({"task_key":"done"}),
+        json!({"task_key":"done","include_done":true}),
+    ] {
+        assert_eq!(
+            call(&mut server, 3, "task_list", query)["structuredContent"]["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    assert_eq!(
+        call(
+            &mut server,
+            4,
+            "task_list",
+            json!({"task_key":"done","include_done":false})
+        )["structuredContent"]["items"],
+        json!([])
+    );
+    let conflicting_filters = call(
+        &mut server,
+        9,
+        "task_list",
+        json!({"task_key":"done","status":"done","include_done":false}),
+    );
+    assert_eq!(conflicting_filters["structuredContent"]["items"], json!([]));
+    assert_eq!(
+        conflicting_filters["structuredContent"]["next_offset"],
+        Value::Null
+    );
+    let archived = call(
+        &mut server,
+        5,
+        "task_archive",
+        json!({"project_path":root.path(),"task_key":"done","expected_updated_at":created["structuredContent"]["updated_at"]}),
+    );
+    assert_eq!(archived["isError"], false);
+    assert_eq!(
+        call(&mut server, 6, "task_list", json!({"task_key":"done"}))["structuredContent"]["items"]
+            [0]["archived"],
+        true
+    );
+    assert_eq!(
+        call(
+            &mut server,
+            7,
+            "task_list",
+            json!({"task_key":"done","include_archived":false})
+        )["structuredContent"]["items"],
+        json!([])
+    );
+    assert_eq!(
+        call(&mut server, 8, "task_list", json!({}))["structuredContent"]["items"],
+        json!([])
+    );
+}
+
+#[test]
+fn mcp_raw_reports_and_partial_step_updates_preserve_input_and_version_boundaries() {
+    let (root, db) = fixture();
+    let mut server = Server::new(db.clone());
+    server.handle(initialize("2025-11-25"));
+    let original = json!({"project_path":root.path(),"task_key":"raw","title":"原样上报","status":"in_progress","progress":"开始","agent":null,"steps":[{"title":"一步","status":"todo","note":""}]});
+    let created = call(&mut server, 2, "task_upsert", original.clone());
+    assert_eq!(created["isError"], false);
+    let id = created["structuredContent"]["id"].as_i64().unwrap();
+    let mut expected = original.clone();
+    expected.as_object_mut().unwrap().remove("project_path");
+    expected.as_object_mut().unwrap().remove("task_key");
+    assert_eq!(db.reports(id).unwrap()[0].payload, expected);
+    let mut patch = original;
+    patch.as_object_mut().unwrap().remove("steps");
+    patch["step_updates"] = json!([{"index":0,"status":"done"}]);
+    let unguarded = call(&mut server, 3, "task_upsert", patch.clone());
+    assert_eq!(unguarded["isError"], true);
+    assert!(unguarded["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Conflict"));
+    patch["expected_updated_at"] = created["structuredContent"]["updated_at"].clone();
+    assert_eq!(call(&mut server, 4, "task_upsert", patch)["isError"], false);
+    assert_eq!(
+        db.board().unwrap().projects[0].tasks[0].steps[0].status,
+        kanban_core::StepStatus::Done
+    );
+    let report = &db.reports(id).unwrap()[0].payload;
+    assert!(report.get("steps").is_none());
+    assert_eq!(report["step_updates"], json!([{"index":0,"status":"done"}]));
 }

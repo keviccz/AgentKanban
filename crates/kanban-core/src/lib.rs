@@ -1,5 +1,6 @@
 //! Shared local storage for the desktop app and independent MCP processes.
 
+mod onboarding;
 mod project;
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -24,7 +25,7 @@ pub enum Error {
     TaskNotFound,
     #[error("Task is archived; restore it with task_archive(archived=false) before updating")]
     TaskArchived,
-    #[error("Conflict: task changed since expected_updated_at; re-read the task before retrying")]
+    #[error("Conflict: existing changes require a current expected_updated_at; re-read the task before retrying")]
     Conflict,
     #[error("Only an unarchived done task with pending review can be reviewed")]
     NotReviewable,
@@ -100,6 +101,25 @@ pub struct Step {
     pub note: String,
 }
 
+/// A versioned change to one existing plan step. Omitted fields are preserved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepUpdate {
+    pub index: u32,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub status: Option<StepStatus>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub note: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Deliverable {
@@ -139,6 +159,12 @@ pub struct Task {
     /// Set when the Agent reopened a done task before the user reviewed it.
     #[serde(default)]
     pub review_withdrawn_at: Option<String>,
+    /// What the task delivers, in the Agent's words.
+    #[serde(default)]
+    pub goal: String,
+    /// How the user can check the result; shown next to the review buttons.
+    #[serde(default)]
+    pub acceptance: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +225,24 @@ pub struct UpsertTask {
         deserialize_with = "optional_non_null",
         skip_serializing_if = "Option::is_none"
     )]
+    pub step_updates: Option<Vec<StepUpdate>>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub goal: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub acceptance: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub expected_updated_at: Option<String>,
 }
 
@@ -244,6 +288,12 @@ pub struct ListTasks {
         deserialize_with = "optional_non_null",
         skip_serializing_if = "Option::is_none"
     )]
+    pub query: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub project_path: Option<String>,
     #[serde(
         default,
@@ -282,6 +332,7 @@ where
 impl Default for ListTasks {
     fn default() -> Self {
         Self {
+            query: None,
             project_path: None,
             task_key: None,
             status: None,
@@ -311,6 +362,17 @@ pub struct ArchiveTask {
 const fn default_archived() -> bool {
     true
 }
+
+/// One Agent report as it arrived over MCP, kept for the user to inspect.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskReport {
+    pub reported_at: String,
+    /// The task_upsert fields the Agent sent, without routing and version fields.
+    pub payload: serde_json::Value,
+}
+
+/// Reports kept per task; older ones are dropped.
+pub const REPORTS_KEPT: i64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskReceipt {
@@ -416,7 +478,7 @@ impl Database {
         }
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 3 {
+        if version > 5 {
             return Err(Error::NewerSchema(version));
         }
         if version == 0 {
@@ -468,6 +530,25 @@ impl Database {
                  PRAGMA user_version=3;",
             )?;
         }
+        if version <= 3 {
+            tx.execute_batch(
+                "ALTER TABLE tasks ADD COLUMN goal TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE tasks ADD COLUMN acceptance TEXT NOT NULL DEFAULT '[]';
+                 PRAGMA user_version=4;",
+            )?;
+        }
+        if version <= 4 {
+            tx.execute_batch(
+                "CREATE TABLE task_reports (
+                    id INTEGER PRIMARY KEY,
+                    task_id INTEGER NOT NULL REFERENCES tasks(id),
+                    reported_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                 );
+                 CREATE INDEX task_reports_task ON task_reports(task_id,id);
+                 PRAGMA user_version=5;",
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -494,6 +575,27 @@ impl Database {
     }
 
     /// The latest reported task change, including archived tasks; not a live-agent heartbeat.
+    /// Newest first.
+    pub fn reports(&self, task_id: i64) -> Result<Vec<TaskReport>> {
+        validate_task_id(task_id)?;
+        let conn = self.connect()?;
+        let mut statement = conn.prepare(
+            "SELECT reported_at,payload FROM task_reports WHERE task_id=?1 ORDER BY id DESC",
+        )?;
+        let rows = statement.query_map([task_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.map(|row| {
+            let (reported_at, payload) = row?;
+            Ok(TaskReport {
+                reported_at,
+                payload: serde_json::from_str(&payload)
+                    .map_err(|err| Error::InvalidInput(err.to_string()))?,
+            })
+        })
+        .collect()
+    }
+
     pub fn last_task_update(&self) -> Result<Option<String>> {
         Ok(self
             .connect()?
@@ -544,6 +646,20 @@ impl Database {
     }
 
     pub fn upsert(&self, input: UpsertTask) -> Result<TaskReceipt> {
+        let report =
+            serde_json::to_value(&input).map_err(|err| Error::InvalidInput(err.to_string()))?;
+        self.upsert_inner(input, report_payload(report))
+    }
+
+    /// Preserve the MCP fields exactly as supplied, including omission and null.
+    /// Routing/version fields are excluded from the stored report.
+    pub fn upsert_from_json(&self, value: serde_json::Value) -> Result<TaskReceipt> {
+        let input: UpsertTask = serde_json::from_value(value.clone())
+            .map_err(|err| Error::InvalidInput(err.to_string()))?;
+        self.upsert_inner(input, report_payload(value))
+    }
+
+    fn upsert_inner(&self, input: UpsertTask, report: String) -> Result<TaskReceipt> {
         validate_text("task_key", &input.task_key, 1, 160)?;
         validate_text("title", &input.title, 1, 200)?;
         validate_text("progress", &input.progress, 0, 600)?;
@@ -567,10 +683,24 @@ impl Database {
         if let Some(steps) = &input.steps {
             validate_steps(steps)?;
         }
+        if input.steps.is_some() && input.step_updates.is_some() {
+            return Err(Error::InvalidInput(
+                "steps and step_updates are mutually exclusive".into(),
+            ));
+        }
+        if let Some(updates) = &input.step_updates {
+            validate_step_updates(updates)?;
+        }
+        if let Some(goal) = &input.goal {
+            validate_text("goal", goal, 0, 300)?;
+        }
+        if let Some(acceptance) = &input.acceptance {
+            validate_acceptance(acceptance)?;
+        }
         if let Some(expected) = &input.expected_updated_at {
             validate_text("expected_updated_at", expected, 1, 64)?;
         }
-        let project = resolve_project(&input.project_path)?;
+        let project = self.resolve_task_project(&input.project_path)?;
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute("INSERT INTO projects(identity,name,path) VALUES (?1,?2,?3) ON CONFLICT(identity) DO NOTHING",
@@ -611,10 +741,35 @@ impl Database {
                 .map(|task| task.deliverables.clone())
                 .unwrap_or_default()
         });
-        let steps = input.steps.unwrap_or_else(|| {
+        let mut steps = input.steps.unwrap_or_else(|| {
             existing
                 .as_ref()
                 .map(|task| task.steps.clone())
+                .unwrap_or_default()
+        });
+        if let Some(updates) = &input.step_updates {
+            for update in updates {
+                let step = steps.get_mut(update.index as usize).ok_or_else(|| {
+                    Error::InvalidInput("step_updates index is outside the existing plan".into())
+                })?;
+                if let Some(status) = update.status {
+                    step.status = status;
+                }
+                if let Some(note) = &update.note {
+                    step.note.clone_from(note);
+                }
+            }
+        }
+        let goal = input.goal.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .map(|task| task.goal.clone())
+                .unwrap_or_default()
+        });
+        let acceptance = input.acceptance.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .map(|task| task.acceptance.clone())
                 .unwrap_or_default()
         });
         if let Some(ref task) = existing {
@@ -630,8 +785,15 @@ impl Database {
                 && task.needs_input == needs_input
                 && task.deliverables == deliverables
                 && task.steps == steps
+                && task.goal == goal
+                && task.acceptance == acceptance
             {
                 return Ok(TaskReceipt::from(task));
+            }
+            // Missing tokens are allowed only for creation and a truly identical retry.
+            // The decision happens under the same write transaction as the update.
+            if input.expected_updated_at.is_none() {
+                return Err(Error::Conflict);
             }
         }
         let review_status = if input.status == Status::Done {
@@ -670,24 +832,36 @@ impl Database {
             .map_err(|err| Error::InvalidInput(err.to_string()))?;
         let steps =
             serde_json::to_string(&steps).map_err(|err| Error::InvalidInput(err.to_string()))?;
+        let acceptance = serde_json::to_string(&acceptance)
+            .map_err(|err| Error::InvalidInput(err.to_string()))?;
         let id = if let Some(task) = existing {
             tx.execute(
                 "UPDATE tasks SET title=?1,status=?2,progress=?3,branch=?4,updated_at=?5,
                     agent=?6,next_action=?7,needs_input=?8,deliverables=?9,review_status=?10,agent_updated_at=?5,
-                    steps=?11,review_withdrawn_at=?12 WHERE id=?13",
+                    steps=?11,review_withdrawn_at=?12,goal=?13,acceptance=?14 WHERE id=?15",
                 params![input.title, input.status.as_str(), input.progress, input.branch, updated_at,
-                    agent,next_action,needs_input,deliverables,review_status.as_str(),steps,review_withdrawn_at,task.id]
+                    agent,next_action,needs_input,deliverables,review_status.as_str(),steps,review_withdrawn_at,
+                    goal,acceptance,task.id]
             )?;
             task.id
         } else {
             tx.execute(
-                "INSERT INTO tasks(project_id,task_key,title,status,progress,branch,updated_at,agent,next_action,needs_input,deliverables,review_status,agent_updated_at,steps)
-                    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?7,?13)",
+                "INSERT INTO tasks(project_id,task_key,title,status,progress,branch,updated_at,agent,next_action,needs_input,deliverables,review_status,agent_updated_at,steps,goal,acceptance)
+                    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?7,?13,?14,?15)",
                 params![project_id, input.task_key, input.title, input.status.as_str(), input.progress, input.branch, updated_at,
-                    agent,next_action,needs_input,deliverables,review_status.as_str(),steps]
+                    agent,next_action,needs_input,deliverables,review_status.as_str(),steps,goal,acceptance]
             )?;
             tx.last_insert_rowid()
         };
+        tx.execute(
+            "INSERT INTO task_reports(task_id,reported_at,payload) VALUES (?1,?2,?3)",
+            params![id, updated_at, report],
+        )?;
+        tx.execute(
+            "DELETE FROM task_reports WHERE task_id=?1 AND id NOT IN
+                (SELECT id FROM task_reports WHERE task_id=?1 ORDER BY id DESC LIMIT ?2)",
+            params![id, REPORTS_KEPT],
+        )?;
         tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
         tx.commit()?;
         Ok(TaskReceipt {
@@ -706,10 +880,25 @@ impl Database {
         if let Some(key) = &input.task_key {
             validate_text("task_key", key, 1, 160)?;
         }
+        let query = input
+            .query
+            .as_deref()
+            .map(|query| {
+                validate_text("query", query, 1, 160)?;
+                Ok::<_, Error>(format!(
+                    "%{}%",
+                    query
+                        .trim()
+                        .replace('\\', "\\\\")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_")
+                ))
+            })
+            .transpose()?;
         let identity = input
             .project_path
             .as_deref()
-            .map(resolve_project)
+            .map(|path| self.resolve_task_project(path))
             .transpose()?
             .map(|project| project.identity);
         let conn = self.connect()?;
@@ -720,7 +909,11 @@ impl Database {
                AND (?2 IS NULL OR t.status=?2)
                AND (?3 OR t.status!='done')
                AND (?4 OR t.archived=0)
-               AND (?5 IS NULL OR t.task_key=?5)
+                AND (?5 IS NULL OR t.task_key=?5)
+                AND (?8 IS NULL OR t.task_key LIKE ?8 ESCAPE '\\'
+                     OR t.title LIKE ?8 ESCAPE '\\' OR t.goal LIKE ?8 ESCAPE '\\'
+                     OR t.request LIKE ?8 ESCAPE '\\' OR t.progress LIKE ?8 ESCAPE '\\'
+                     OR t.user_note LIKE ?8 ESCAPE '\\')
              ORDER BY CASE t.status WHEN 'in_progress' THEN 0 WHEN 'blocked' THEN 1 WHEN 'todo' THEN 2 ELSE 3 END,
                       t.updated_at DESC,t.id DESC
              LIMIT ?6 OFFSET ?7"
@@ -736,7 +929,8 @@ impl Database {
                     input.include_archived,
                     input.task_key,
                     input.limit + 1,
-                    input.offset
+                    input.offset,
+                    query
                 ],
                 |row| {
                     Ok(ListedTask {
@@ -764,7 +958,7 @@ impl Database {
         if let Some(expected) = &input.expected_updated_at {
             validate_text("expected_updated_at", expected, 1, 64)?;
         }
-        let project = resolve_project(&input.project_path)?;
+        let project = self.resolve_task_project(&input.project_path)?;
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let task = tx.query_row(
@@ -774,6 +968,9 @@ impl Database {
         check_expected(input.expected_updated_at.as_deref(), Some(&task))?;
         if task.archived == input.archived {
             return Ok(TaskReceipt::from(&task));
+        }
+        if input.expected_updated_at.is_none() {
+            return Err(Error::Conflict);
         }
         let updated_at = changed_at(Some(&task.updated_at));
         tx.execute(
@@ -823,7 +1020,7 @@ impl Database {
         validate_text("task_key", &input.task_key, 1, 160)?;
         validate_text("title", &input.title, 1, 200)?;
         validate_multiline("request", &input.request, 0, 2000)?;
-        let project = resolve_project(&input.project_path)?;
+        let project = self.resolve_task_project(&input.project_path)?;
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute("INSERT INTO projects(identity,name,path) VALUES (?1,?2,?3) ON CONFLICT(identity) DO NOTHING",
@@ -979,6 +1176,37 @@ impl Database {
     pub fn set_tracking_paused(&self, paused: bool) -> Result<()> {
         self.set_setting(TRACKING_PAUSED, if paused { "1" } else { "0" })
     }
+
+    /// Archives only human-accepted work left untouched for `older_than`.
+    /// Legacy and pending reviews stay visible. This is not Agent activity.
+    pub fn archive_finished(&self, older_than: Duration) -> Result<usize> {
+        let age = chrono::Duration::from_std(older_than)
+            .map_err(|_| Error::InvalidInput("archive age is too large".into()))?;
+        let cutoff = (Utc::now() - age).to_rfc3339_opts(SecondsFormat::Millis, true);
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let archived = tx.execute(
+            "UPDATE tasks SET archived=1,updated_at=?1
+             WHERE archived=0 AND status='done' AND review_status='accepted' AND updated_at<?2",
+            params![changed_at(None), cutoff],
+        )?;
+        if archived > 0 {
+            tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
+        }
+        tx.commit()?;
+        Ok(archived)
+    }
+
+    /// A consistent single-file copy, WAL content included, safe while
+    /// MCP processes keep writing.
+    pub fn backup_to(&self, target: &Path) -> Result<()> {
+        if target.exists() {
+            return Err(Error::InvalidInput("backup file already exists".into()));
+        }
+        self.connect()?
+            .execute("VACUUM INTO ?1", [target.to_string_lossy()])?;
+        Ok(())
+    }
 }
 
 fn validate_text(name: &str, value: &str, min: usize, max: usize) -> Result<()> {
@@ -1054,6 +1282,53 @@ fn validate_deliverables(deliverables: &[Deliverable]) -> Result<()> {
     Ok(())
 }
 
+/// What the Agent sent, minus the fields that only route or version the write.
+fn report_payload(mut value: serde_json::Value) -> String {
+    if let Some(fields) = value.as_object_mut() {
+        for routing in ["project_path", "task_key", "expected_updated_at"] {
+            fields.remove(routing);
+        }
+    }
+    value.to_string()
+}
+
+fn validate_step_updates(updates: &[StepUpdate]) -> Result<()> {
+    if updates.len() > 12 {
+        return Err(Error::InvalidInput(
+            "step_updates allows at most 12 items".into(),
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for update in updates {
+        if !seen.insert(update.index) {
+            return Err(Error::InvalidInput(
+                "step_updates contains a duplicate index".into(),
+            ));
+        }
+        if update.status.is_none() && update.note.is_none() {
+            return Err(Error::InvalidInput(
+                "each step update needs status or note".into(),
+            ));
+        }
+        if let Some(note) = &update.note {
+            validate_text("step update note", note, 0, 200)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_acceptance(items: &[String]) -> Result<()> {
+    if items.len() > 8 {
+        return Err(Error::InvalidInput(
+            "acceptance allows at most 8 items".into(),
+        ));
+    }
+    for item in items {
+        validate_text("acceptance item", item, 1, 160)?;
+    }
+    Ok(())
+}
+
 fn validate_steps(steps: &[Step]) -> Result<()> {
     if steps.len() > 12 {
         return Err(Error::InvalidInput("steps allows at most 12 items".into()));
@@ -1125,6 +1400,10 @@ fn read_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     let steps = serde_json::from_str(&raw_steps).map_err(|err| {
         rusqlite::Error::FromSqlConversionFailure(17, rusqlite::types::Type::Text, Box::new(err))
     })?;
+    let raw_acceptance: String = row.get("acceptance")?;
+    let acceptance = serde_json::from_str(&raw_acceptance).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(20, rusqlite::types::Type::Text, Box::new(err))
+    })?;
     Ok(Task {
         id: row.get("id")?,
         project_id: row.get("project_id")?,
@@ -1145,5 +1424,7 @@ fn read_task(row: &Row<'_>) -> rusqlite::Result<Task> {
         agent_updated_at: row.get("agent_updated_at")?,
         steps,
         review_withdrawn_at: row.get("review_withdrawn_at")?,
+        goal: row.get("goal")?,
+        acceptance,
     })
 }

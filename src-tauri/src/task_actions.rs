@@ -22,7 +22,8 @@ pub(crate) fn handoff(project_path: &str, task: &Task) -> Result<String, String>
          以下是复制时的任务资料；执行前以查询得到的最新 request 和 user_note 为准：\n\
          {context}\n\
          沿用查询返回的绝对 project_path 和稳定 task_key。每次 task_upsert 带上最新 updated_at 作为 expected_updated_at；若发生版本冲突，重新查询并核对用户反馈，不覆盖较新的改动。\n\
-         接手时填写 agent，设为 in_progress，用 steps 写下计划步骤，说明 progress、next_action 和 needs_input（无需用户输入时为空）。每次提供完整的 title、status、progress，并保留需要的 branch（省略或 null 会清除）。agent、next_action、needs_input、deliverables、steps 省略时保留原值；传入时替换对应字段，deliverables 和 steps 使用完整数组。request、user_note、review_status 由用户操作维护，不传给 task_upsert。\n\
+         接手时填写 agent，设为 in_progress；goal、acceptance 为空时补上（做什么、用户怎么验收），首次用 steps 写计划。推进已有计划优先用 step_updates，只发变化的步骤（index 从 0 起，status 或 note）；与 steps 不同时使用。每次提供完整的 title、status、progress，并保留需要的 branch（省略或 null 会清除）。agent、next_action、needs_input、deliverables、steps、goal、acceptance 省略时保留原值。request、user_note、review_status 由用户操作维护，不传给 task_upsert。\n\
+         同一任务由一个主 Agent 统一记账；子 Agent 返回结果，不另建重复任务或并行覆盖此记录。暂停时继续工作，不重试或轮询；下个正常里程碑或新任务再尝试一次。\n\
          只在阶段完成（某个步骤完成）、真实受阻或全部完成时更新原记录，不为单次修改或命令更新。完成工作和必要验证后，用 deliverables 提供成果名称与链接或路径，显式把 needs_input 设为空字符串，设为 done 并等待用户人工验收；不要把 Agent 完成等同于用户已验收。若任务已完成且无需修改，直接汇报现有成果。"
     ))
 }
@@ -84,10 +85,12 @@ mod tests {
         assert!(text.contains("\"include_done\":true"));
         assert!(text.contains("expected_updated_at"));
         assert!(text.contains("最新 updated_at"));
-        assert!(text.contains("deliverables、steps 省略时保留原值"));
+        assert!(text.contains("steps、goal、acceptance 省略时保留原值"));
         assert!(text.contains("显式把 needs_input 设为空字符串"));
         assert!(text.contains("人工验收"));
         assert!(text.contains("steps"));
+        assert!(text.contains("step_updates"));
+        assert!(text.contains("一个主 Agent"));
         assert!(text.contains("阶段完成"));
     }
 }

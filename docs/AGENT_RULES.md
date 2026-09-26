@@ -1,11 +1,16 @@
 # AgentKanban 同步规则
 
 - 会修改文件的任务（代码、配置、文档）无需用户提醒，自动入板；普通问答、只读审查和调研不入板；用户说「不用记」时不记。从浮窗接手已有任务时不重复创建。
-- 开始时先按 `project_path` 用 `task_list` 查询摘要，找到相符的任务就沿用原 `task_key`；没有再新建 `auto:<简短标识>`。需要 `request`、`user_note`、`steps` 等全文时按 `task_key` 精确查询。
-- 开工时用 `steps` 写下计划步骤（最多 12 步），之后整份替换更新。
+- 同一任务仅由一个主 Agent 统一记账；子 Agent 返回工作结果，不重复创建或并行覆盖该记录。确实独立的任务才使用不同 `task_key`。
+- 已知 `task_key` 就按项目和 key 精读；否则用 `task_list(project_path, query=任务关键词)` 定向查找，避免逐页扫描整个项目。找到相符记录后先精读再接手；搜索未命中可换更短的关键词核对，确认没有才新建 `auto:<简短标识>`。
+- 精确 key 默认包含已完成和已归档记录；显式 `include_done:false` / `include_archived:false` 才排除。摘要的 `has_request` / `has_user_note` 表示需要精读的原始需求和用户意见，不能只凭标题开工。
+- 新建时写 `agent`、`goal`（做什么）、`acceptance`（怎么验收，最多 8 条）和 `steps`（计划，最多 12 步）。推进时优先用 `step_updates:[{index:0,status:"done",note:"结果"}]` 只改变化步骤；索引从 0 起，备注省略保留、空字符串清除。初始化或重排才整份传 `steps`，两者不能同时发送。
 - 只在阶段完成（某个步骤完成）、真实受阻或全部完成时更新；不为单次修改、单条命令或无变化的状态更新。`blocked` 需有实际阻碍；用 `needs_input` 写需要用户补充什么，解决后显式清空。
-- `task_upsert` 每次传 `project_path`、`task_key`、`title`、`status`、`progress`；保留分支需同时传 `branch`，省略或 `null` 会清空。`agent`、`next_action`、`needs_input`、`deliverables`、`steps` 省略则保留；清空用空字符串或空数组。
-- 更新时带上次回执或查询的 `updated_at` 作为 `expected_updated_at`；冲突后按 `task_key` 重新查询并合并新反馈，不去掉校验强行覆盖。
+- `task_upsert` 每次传 `project_path`、`task_key`、`title`、`status`、`progress`；保留分支需同时传 `branch`，省略或 `null` 会清空。`agent`、`next_action`、`needs_input`、`deliverables`、`steps`、`goal`、`acceptance` 省略则保留；清空用空字符串或空数组。
+- 已有任务的实质更新与归档必须带上次回执或查询的 `updated_at` 作为 `expected_updated_at`；缺失或过期会被拒绝。冲突后按 `task_key` 精读并合并，不去掉校验强行覆盖。无版本号仅可新建或重试完全相同的内容。
+- 收到暂停回复后正常工作，不重试或轮询；在下个正常里程碑或新任务再尝试一次。恢复后下次正常调用生效，不回补暂停期间的每条操作。
+- 仅 MCP 传输连接中断时，可使用原 MCP 配置的同一 `command` 与环境（尤其 `AGENTKANBAN_DATA_DIR`）调用 `agentkanban-mcp --call <原工具名> --input-file <UTF-8 JSON 参数文件>`；先按项目与原 key 查询最新内容，再在正常里程碑携带最新版本更新。调用由原主 Agent 负责，不另开任务、不轮询、不重放命令流水。冲突、校验失败、暂停、权限拒绝或用户禁用工具不能触发备用入口；它仍遵守相同保护。MCP 恢复后先精读并合并，包括用户在断线期间的补充。
+- 备用入口也不可用时，简短说明未同步，在交接中保留项目、原 key 和最后可确认的进展；恢复后只合并当前事实，不编造漏报历史或自动宣称已补齐。只能使用已确认的原程序与数据目录，不猜测另一套位置。
 - `progress` 用一句单行事实，不记录聊天、命令流水、完整日志或敏感凭据。回复用户时不必复述看板操作，失败时再说明。
 - 工作与必要验证完成后才标 `done`，用 `deliverables` 提供可定位的成果。`done` 等待用户验收；不能通过 MCP 修改用户需求、意见或验收结论。
-- 归档保留数据；继续已归档任务时先用 `task_archive(archived=false)` 恢复。仅通过 MCP 工具操作，不直接写数据库。
+- 归档保留数据；继续已归档任务时先用 `task_archive(archived=false)` 恢复。仅通过三个 MCP 工具或上述同程序备用入口操作，不直接写数据库。

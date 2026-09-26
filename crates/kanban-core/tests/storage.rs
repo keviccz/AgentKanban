@@ -37,7 +37,10 @@ impl Fixture {
             needs_input: None,
             deliverables: None,
             steps: None,
-            expected_updated_at: None,
+            step_updates: None,
+            goal: None,
+            acceptance: None,
+            expected_updated_at: self.version(key),
         }
     }
 
@@ -46,8 +49,23 @@ impl Fixture {
             project_path: self.project.clone(),
             task_key: key.into(),
             archived,
-            expected_updated_at: None,
+            expected_updated_at: self.version(key),
         }
+    }
+
+    fn version(&self, key: &str) -> Option<String> {
+        self.db
+            .list(ListTasks {
+                project_path: Some(self.project.clone()),
+                task_key: Some(key.into()),
+                include_done: true,
+                include_archived: true,
+                ..Default::default()
+            })
+            .unwrap()
+            .items
+            .first()
+            .map(|item| item.task.updated_at.clone())
     }
 }
 
@@ -379,6 +397,7 @@ fn worktrees_and_repository_subdirectories_share_task_identity() {
     let created = fixture.db.upsert(input.clone()).unwrap();
     input.project_path = worktree.to_str().unwrap().into();
     input.status = Status::InProgress;
+    input.expected_updated_at = Some(created.updated_at.clone());
     let updated = fixture.db.upsert(input).unwrap();
     assert_eq!(created.id, updated.id);
     assert_eq!(fixture.db.board().unwrap().projects.len(), 1);

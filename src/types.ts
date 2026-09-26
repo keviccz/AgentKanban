@@ -10,25 +10,41 @@ export interface Task {
   deliverables: Deliverable[]; review_status: ReviewStatus; user_note: string;
   agent_updated_at: string | null;
   steps: Step[]; review_withdrawn_at: string | null;
+  goal: string; acceptance: string[];
 }
+/** One task_upsert as the Agent sent it (routing fields removed). */
+export interface TaskReport { reported_at: string; payload: Record<string, unknown> }
 export interface TaskReceipt { id: number; status: Status; updated_at: string }
 export interface CaptureInput { project_path: string; task_key: string; title: string; request: string }
 export interface Project { id: number; name: string; path: string; tasks: Task[] }
+export const isTutorialTask = (project: Pick<Project, 'name'>, task: Pick<Task, 'agent' | 'task_key'>) => project.name === '新手教程'
+  && task.agent === '教学示例'
+  && (task.task_key === 'tutorial:follow-progress' || task.task_key === 'tutorial:review-delivery');
+export const isTutorialProject = (project: Project) => project.tasks.length > 0 && project.tasks.every(task => isTutorialTask(project, task));
 export interface Snapshot { revision: number; projects: Project[] }
 export interface Preferences {
-  theme: 'light' | 'dark'; always_on_top: boolean; compact: boolean; filter: Filter;
+  theme: 'light' | 'dark'; always_on_top: boolean; compact: boolean; concise: boolean; filter: Filter;
   collapsed_projects: number[]; expanded_projects: number[]; completed_projects: number[];
   focused_project: number | null; pinned_projects: number[];
   stale_after_hours: number; shortcut_enabled: boolean;
+  notify: boolean; auto_archive_days: number; start_hidden: boolean;
+  font_scale: number; opacity: number;
 }
 export const defaults: Preferences = {
-  theme: 'light', always_on_top: true, compact: false, filter: 'all',
+  theme: 'light', always_on_top: true, compact: false, concise: false, filter: 'all',
   collapsed_projects: [], expanded_projects: [], completed_projects: [],
   focused_project: null, pinned_projects: [], stale_after_hours: 24, shortcut_enabled: true,
+  notify: true, auto_archive_days: 7, start_hidden: true,
+  font_scale: 100, opacity: 100,
 };
 export interface IntegrationInfo {
   app_version: string; mcp_path: string; mcp_exists: boolean; database_path: string;
-  last_task_update: string | null; configs: { codex: string; claude: string; cursor: string };
+  last_task_update: string | null;
+}
+export interface ClientStatus {
+  id: string; name: string; detected: boolean;
+  mcp: 'ok' | 'outdated' | 'missing' | 'unreadable'; rules: boolean | null;
+  config_path: string; rules_path: string | null; manual: string;
 }
 export interface DesktopSettings {
   autostart_enabled: boolean; shortcut_enabled: boolean; shortcut: string;

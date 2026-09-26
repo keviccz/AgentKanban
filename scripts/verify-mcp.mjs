@@ -196,6 +196,7 @@ async function check(name, action) {
 
 let client;
 let id;
+let latestMainVersion;
 const task = {
   project_path: projectPath,
   task_key: 'feature:中文-sync',
@@ -240,6 +241,7 @@ function handoffUpdate(current, changes = {}) {
     status: current.status,
     progress: current.progress,
     branch: current.branch,
+    expected_updated_at: current.updated_at,
     ...changes,
   };
 }
@@ -271,11 +273,12 @@ try {
     const created = await client.call('task_upsert', task);
     assertCompact(created, 'todo');
     id = created.id;
-    const updated = await client.call('task_upsert', { ...task, status: 'in_progress', progress: '已开始实现，正在分别验证“协议”和界面。' });
+    const updated = await client.call('task_upsert', { ...task, status: 'in_progress', progress: '已开始实现，正在分别验证“协议”和界面。', expected_updated_at: created.updated_at });
     assertCompact(updated, 'in_progress');
     assert.equal(updated.id, id);
     const repeated = await client.call('task_upsert', { ...task, status: 'in_progress', progress: '已开始实现，正在分别验证“协议”和界面。' });
     assert.equal(repeated.id, id);
+    latestMainVersion = repeated.updated_at;
     const list = await client.call('task_list', { project_path: projectPath });
     assert.equal(list.items.length, 1);
     assert.equal(list.items[0].id, id);
@@ -287,9 +290,10 @@ try {
   });
 
   await check('blocked, complete, reopen, and default unfinished filtering', async () => {
-    assertCompact(await client.call('task_upsert', { ...task, status: 'blocked', progress: '等待所需输入。' }), 'blocked');
+    const blocked = await client.call('task_upsert', { ...task, status: 'blocked', progress: '等待所需输入。', expected_updated_at: latestMainVersion });
+    assertCompact(blocked, 'blocked');
     assert.equal((await client.call('task_list', { project_path: projectPath, status: 'blocked' })).items[0].id, id);
-    const done = await client.call('task_upsert', { ...task, status: 'done', progress: '实现和自动检查已完成。' });
+    const done = await client.call('task_upsert', { ...task, status: 'done', progress: '实现和自动检查已完成。', expected_updated_at: blocked.updated_at });
     assertCompact(done, 'done');
     assert.equal(done.id, id);
     assert.equal((await client.call('task_list', { project_path: projectPath })).items.length, 0);
@@ -297,13 +301,14 @@ try {
     assert.equal(completed.items.length, 1);
     assert.equal(completed.items[0].status, 'done');
     assert.equal((await client.call('task_list', { project_path: projectPath, status: 'done' })).items[0].id, id);
-    const reopened = await client.call('task_upsert', { ...task, status: 'in_progress', progress: '发现新的复验需求，重新打开原任务。' });
+    const reopened = await client.call('task_upsert', { ...task, status: 'in_progress', progress: '发现新的复验需求，重新打开原任务。', expected_updated_at: done.updated_at });
+    latestMainVersion = reopened.updated_at;
     assertCompact(reopened, 'in_progress');
     assert.equal(reopened.id, id);
   });
 
   await check('archive and restore retain the same task', async () => {
-    const archived = await client.call('task_archive', { project_path: projectPath, task_key: task.task_key });
+    const archived = await client.call('task_archive', { project_path: projectPath, task_key: task.task_key, expected_updated_at: latestMainVersion });
     assertCompact(archived, 'in_progress');
     assert.equal(archived.id, id);
     assert.equal((await client.call('task_list', { project_path: projectPath })).items.length, 0);
@@ -311,7 +316,8 @@ try {
     assert.equal(list.items.length, 1);
     assert.equal(list.items[0].archived, true);
     await client.expectToolError('task_upsert', { ...task, progress: '归档项应先恢复再更新。' });
-    const restored = await client.call('task_archive', { project_path: projectPath, task_key: task.task_key, archived: false });
+    const restored = await client.call('task_archive', { project_path: projectPath, task_key: task.task_key, archived: false, expected_updated_at: archived.updated_at });
+    latestMainVersion = restored.updated_at;
     assertCompact(restored, 'in_progress');
     assert.equal(restored.id, id);
     assert.equal((await client.call('task_list', { project_path: projectPath })).items[0].archived, false);
@@ -515,20 +521,21 @@ try {
     await mkdir(otherProject);
     await client.call('task_upsert', { ...handoffTask, project_path: otherProject });
     const exactQuery = { project_path: handoffProject, task_key: handoffTask.task_key };
-    assert.equal((await client.call('task_list', exactQuery)).items.length, 0, 'Exact lookup still excludes completed tasks by default');
+    assert.equal((await client.call('task_list', exactQuery)).items.length, 1, 'Exact lookup includes completed tasks by default');
+    assert.equal((await client.call('task_list', { ...exactQuery, include_done: false })).items.length, 0, 'Explicit false still excludes completed tasks');
     assert.equal((await client.call('task_list', { ...exactQuery, task_key: 'feature:handoff' })).items.length, 0, 'A prefix is not an exact key');
     const unscoped = await client.call('task_list', { task_key: handoffTask.task_key, include_done: true });
     assert.equal(unscoped.items.length, 2, 'The same key in different projects remains distinct');
     let stored = await getHandoffTask();
     const scoped = await client.call('task_list', { ...exactQuery, status: 'done' });
     assert.deepEqual(scoped.items.map((item) => item.id), [stored.id]);
-    const archived = await client.call('task_archive', exactQuery);
+    const archived = await client.call('task_archive', { ...exactQuery, expected_updated_at: stored.updated_at });
     assertCompact(archived, 'done');
-    assert.equal((await client.call('task_list', { ...exactQuery, include_done: true })).items.length, 0);
-    assert.equal((await client.call('task_list', { ...exactQuery, include_archived: true })).items.length, 0);
+    assert.equal((await client.call('task_list', { ...exactQuery, include_done: true })).items.length, 1);
+    assert.equal((await client.call('task_list', { ...exactQuery, include_archived: false })).items.length, 0);
     stored = await getHandoffTask();
     assert.equal(stored.archived, true);
-    await client.call('task_archive', { ...exactQuery, archived: false });
+    await client.call('task_archive', { ...exactQuery, archived: false, expected_updated_at: archived.updated_at });
     assert.equal((await getHandoffTask()).archived, false);
   });
 

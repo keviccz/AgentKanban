@@ -11,7 +11,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 kanban-core = { path = "../crates/kanban-core" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
@@ -21,4 +21,5 @@ tokio = { version = "1", features = ["io-util", "process", "time"] }
 toml = "0.8"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
+tauri-winrt-notification = "0.7"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

@@ -38,7 +38,21 @@ impl Fixture {
             needs_input: None,
             deliverables: None,
             steps: None,
-            expected_updated_at: None,
+            step_updates: None,
+            goal: None,
+            acceptance: None,
+            expected_updated_at: self
+                .db
+                .list(ListTasks {
+                    task_key: Some(key.into()),
+                    include_done: true,
+                    include_archived: true,
+                    ..Default::default()
+                })
+                .unwrap()
+                .items
+                .first()
+                .map(|item| item.task.updated_at.clone()),
         }
     }
 
@@ -245,6 +259,7 @@ fn optional_patches_preserve_values_and_noop_keeps_accepted_review_and_timestamp
         task.next_action.is_empty() && task.needs_input.is_empty() && task.deliverables.is_empty()
     );
     assert_eq!(task.user_note, "验收通过");
+    clear.expected_updated_at = None;
     assert_eq!(fixture.db.upsert(clear).unwrap(), cleared);
 }
 
@@ -351,7 +366,11 @@ fn rejection_requires_a_note_and_only_pending_unarchived_done_tasks_are_reviewab
     ));
     fixture
         .db
-        .archive(fixture.archive("review-guard", false, None))
+        .archive(fixture.archive(
+            "review-guard",
+            false,
+            Some(fixture.task("review-guard").updated_at),
+        ))
         .unwrap();
     let task = fixture.task("review-guard");
     let accepted = fixture
@@ -691,7 +710,157 @@ fn v04_gui_archive_is_versioned_and_not_agent_activity() {
     // The Agent can still restore it through the MCP tool.
     fixture
         .db
-        .archive(fixture.archive("feature:gui-archive", false, None))
+        .archive(fixture.archive(
+            "feature:gui-archive",
+            false,
+            Some(fixture.task("feature:gui-archive").updated_at),
+        ))
         .unwrap();
     assert!(!fixture.task("feature:gui-archive").archived);
+}
+
+#[test]
+fn auto_archive_only_hides_old_accepted_work_and_backups_are_complete_copies() {
+    let fixture = Fixture::new();
+    let accepted = fixture
+        .db
+        .upsert(fixture.upsert("accepted", Status::Done))
+        .unwrap();
+    fixture
+        .db
+        .review(ReviewTask {
+            id: accepted.id,
+            expected_updated_at: accepted.updated_at,
+            accepted: true,
+            note: String::new(),
+        })
+        .unwrap();
+    fixture
+        .db
+        .upsert(fixture.upsert("awaiting-review", Status::Done))
+        .unwrap();
+    fixture
+        .db
+        .upsert(fixture.upsert("working", Status::InProgress))
+        .unwrap();
+
+    let long = std::time::Duration::from_secs(86_400);
+    assert_eq!(fixture.db.archive_finished(long).unwrap(), 0);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let revision = fixture.db.revision().unwrap();
+    assert_eq!(
+        fixture
+            .db
+            .archive_finished(std::time::Duration::ZERO)
+            .unwrap(),
+        1
+    );
+    assert_eq!(fixture.db.revision().unwrap(), revision + 1);
+    assert!(fixture.task("accepted").archived);
+    assert!(!fixture.task("awaiting-review").archived);
+    assert!(!fixture.task("working").archived);
+
+    let target = fixture.root.path().join("backup.sqlite3");
+    fixture.db.backup_to(&target).unwrap();
+    assert!(fixture.db.backup_to(&target).is_err());
+    let copy = Database::open(target).unwrap();
+    let keys: Vec<String> = copy
+        .list(ListTasks {
+            include_done: true,
+            include_archived: true,
+            ..Default::default()
+        })
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|item| item.task.task_key)
+        .collect();
+    assert_eq!(keys.len(), 3);
+}
+
+#[test]
+fn goal_and_acceptance_are_preserved_patches_with_bounds() {
+    let fixture = Fixture::new();
+    let created = fixture
+        .db
+        .upsert(UpsertTask {
+            goal: Some("登录页支持记住我，7 天内免登录".into()),
+            acceptance: Some(vec!["勾选后关闭浏览器再打开仍是登录状态".into()]),
+            ..fixture.upsert("feature:goal", Status::InProgress)
+        })
+        .unwrap();
+    let kept = fixture
+        .db
+        .upsert(UpsertTask {
+            progress: "接口已完成".into(),
+            expected_updated_at: Some(created.updated_at.clone()),
+            ..fixture.upsert("feature:goal", Status::InProgress)
+        })
+        .unwrap();
+    let task = fixture.task("feature:goal");
+    assert_eq!(task.goal, "登录页支持记住我，7 天内免登录");
+    assert_eq!(task.acceptance, ["勾选后关闭浏览器再打开仍是登录状态"]);
+    let unchanged = fixture
+        .db
+        .upsert(UpsertTask {
+            progress: "接口已完成".into(),
+            goal: Some(task.goal.clone()),
+            ..fixture.upsert("feature:goal", Status::InProgress)
+        })
+        .unwrap();
+    assert_eq!(unchanged.updated_at, kept.updated_at);
+    assert!(fixture
+        .db
+        .upsert(UpsertTask {
+            acceptance: Some(vec!["x".into(); 9]),
+            ..fixture.upsert("feature:goal", Status::InProgress)
+        })
+        .is_err());
+    assert!(fixture
+        .db
+        .upsert(UpsertTask {
+            acceptance: Some(vec![String::new()]),
+            ..fixture.upsert("feature:goal", Status::InProgress)
+        })
+        .is_err());
+}
+
+#[test]
+fn agent_reports_keep_what_was_sent_skip_noops_and_stay_bounded() {
+    let fixture = Fixture::new();
+    let first = fixture
+        .db
+        .upsert(UpsertTask {
+            goal: Some("导出报告".into()),
+            ..fixture.upsert("feature:reports", Status::InProgress)
+        })
+        .unwrap();
+    // An identical write is not a new report.
+    fixture
+        .db
+        .upsert(UpsertTask {
+            goal: Some("导出报告".into()),
+            ..fixture.upsert("feature:reports", Status::InProgress)
+        })
+        .unwrap();
+    let reports = fixture.db.reports(first.id).unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].reported_at, first.updated_at);
+    assert_eq!(reports[0].payload["goal"], "导出报告");
+    assert_eq!(reports[0].payload["status"], "in_progress");
+    assert!(reports[0].payload.get("project_path").is_none());
+    assert!(reports[0].payload.get("steps").is_none());
+
+    for index in 0..35 {
+        fixture
+            .db
+            .upsert(UpsertTask {
+                progress: format!("第 {index} 次"),
+                ..fixture.upsert("feature:reports", Status::InProgress)
+            })
+            .unwrap();
+    }
+    let reports = fixture.db.reports(first.id).unwrap();
+    assert_eq!(reports.len() as i64, kanban_core::REPORTS_KEPT);
+    assert_eq!(reports[0].payload["progress"], "第 34 次");
 }

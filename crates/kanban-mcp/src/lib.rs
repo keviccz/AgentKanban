@@ -1,19 +1,18 @@
 //! Small newline-delimited JSON-RPC implementation of the local MCP surface.
 
-use kanban_core::{
-    ArchiveTask, Database, ListTasks, ListedTask, ReviewStatus, Status, StepStatus, UpsertTask,
-};
+use kanban_core::{ArchiveTask, Database, ListTasks, ListedTask, ReviewStatus, Status, StepStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
 const PROTOCOL_VERSION: &str = "2025-11-25";
 const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
-const MAX_LINE_BYTES: usize = 1024 * 1024;
+pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
+pub const TOOL_NAMES: &[&str] = &["task_upsert", "task_list", "task_archive"];
 // Some clients (e.g. Codex CLI 0.156) do not show server instructions to the
 // model, so the tracking rules live in the tool descriptions; this only adds the rest.
 const INSTRUCTIONS: &str = "AgentKanban tracks file-modifying work automatically; the task_list and task_upsert descriptions say when. On Conflict, re-read with task_key before retrying. Keep board bookkeeping out of replies unless it fails.";
-const PAUSED_MESSAGE: &str = "The user paused AgentKanban tracking in the desktop app. Nothing was read or recorded. Do not call AgentKanban tools again in this session unless the user says tracking is back on; continue your task normally.";
+const PAUSED_MESSAGE: &str = "The user paused AgentKanban tracking. Nothing was read or recorded. Skip this update and continue the task; do not retry or poll. At the next normal milestone or new task, try once so desktop resume can take effect.";
 /// Default page for task_list over MCP; summaries keep the resume query cheap.
 const LIST_LIMIT: u64 = 5;
 
@@ -71,7 +70,7 @@ fn read_message(input: &mut impl BufRead) -> io::Result<Option<MessageLine>> {
         let newline = available.iter().position(|byte| *byte == b'\n');
         let consumed = newline.map_or(available.len(), |index| index + 1);
         if !too_large {
-            if message.len() + consumed > MAX_LINE_BYTES {
+            if message.len() + consumed > MAX_INPUT_BYTES {
                 too_large = true;
                 message.clear();
             } else {
@@ -216,23 +215,7 @@ impl Server {
         }
         let call: CallParams = serde_json::from_value(params)
             .map_err(|error| (-32602, format!("Invalid tools/call params: {error}")))?;
-        if !call.arguments.is_object() {
-            return Err((-32602, "arguments must be an object".into()));
-        }
-        if !matches!(
-            call.name.as_str(),
-            "task_upsert" | "task_list" | "task_archive"
-        ) {
-            return Err((-32602, format!("Unknown tool: {}", call.name)));
-        }
-        // A pause is the user's choice, not a failure: answer successfully so the
-        // Agent carries on with its work instead of retrying.
-        let result = match self.db.tracking_paused() {
-            Ok(true) => Ok(json!({"paused": true, "recorded": false, "message": PAUSED_MESSAGE})),
-            Ok(false) => self.run_tool(&call.name, call.arguments),
-            Err(error) => Err(error.to_string()),
-        };
-        Ok(match result {
+        Ok(match execute_tool(&self.db, &call.name, call.arguments) {
             Ok(value) => {
                 let mut result =
                     json!({"content":[{"type":"text","text":value.to_string()}],"isError":false});
@@ -241,18 +224,70 @@ impl Server {
                 }
                 result
             }
-            Err(error) => json!({"content":[{"type":"text","text":error}],"isError":true}),
+            Err(ToolCallError::InvalidParams(error)) => return Err((-32602, error)),
+            Err(ToolCallError::Operation(error)) => {
+                json!({"content":[{"type":"text","text":error}],"isError":true})
+            }
         })
     }
+}
 
-    fn run_tool(&self, name: &str, arguments: Value) -> std::result::Result<Value, String> {
-        match name {
-            "task_upsert" => {
-                parse_and_run::<UpsertTask, _>(arguments, |input| self.db.upsert(input))
-            }
-            "task_list" => list_tasks(&self.db, arguments),
-            _ => parse_and_run::<ArchiveTask, _>(arguments, |input| self.db.archive(input)),
+#[derive(Debug)]
+pub enum ToolCallError {
+    InvalidParams(String),
+    Operation(String),
+}
+
+impl std::fmt::Display for ToolCallError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidParams(message) | Self::Operation(message) => formatter.write_str(message),
         }
+    }
+}
+
+impl std::error::Error for ToolCallError {}
+
+/// Shared by MCP and the one-shot local CLI. The transport cannot bypass pause,
+/// argument validation, optimistic concurrency, or the original report payload.
+pub fn execute_tool(
+    db: &Database,
+    name: &str,
+    arguments: Value,
+) -> std::result::Result<Value, ToolCallError> {
+    if !arguments.is_object() {
+        return Err(ToolCallError::InvalidParams(
+            "arguments must be an object".into(),
+        ));
+    }
+    if !TOOL_NAMES.contains(&name) {
+        return Err(ToolCallError::InvalidParams(format!(
+            "Unknown tool: {name}"
+        )));
+    }
+    // Pausing is successful but never reads or changes a task. Both transports
+    // check the same persisted setting on every normal call.
+    let paused = db
+        .tracking_paused()
+        .map_err(|error| ToolCallError::Operation(error.to_string()))?;
+    if paused {
+        return Ok(json!({"paused":true,"recorded":false,"message":PAUSED_MESSAGE}));
+    }
+    run_tool(db, name, arguments).map_err(ToolCallError::Operation)
+}
+
+fn run_tool(db: &Database, name: &str, arguments: Value) -> std::result::Result<Value, String> {
+    match name {
+        "task_upsert" => {
+            let receipt = db
+                .upsert_from_json(arguments)
+                .map_err(|error| error.to_string())?;
+            serde_json::to_value(receipt)
+                .map_err(|error| format!("Cannot serialize result: {error}"))
+        }
+        "task_list" => list_tasks(db, arguments),
+        "task_archive" => parse_and_run::<ArchiveTask, _>(arguments, |input| db.archive(input)),
+        _ => Err(format!("Unknown tool: {name}")),
     }
 }
 
@@ -274,16 +309,21 @@ struct TaskSummary<'a> {
     task_key: &'a str,
     title: &'a str,
     status: Status,
-    progress: &'a str,
+    progress: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    progress_truncated: bool,
     branch: &'a Option<String>,
     archived: bool,
     review_status: ReviewStatus,
     updated_at: &'a str,
-    project_path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_path: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     steps: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     has_user_note: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    has_request: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     needs_input: bool,
 }
@@ -301,14 +341,16 @@ impl<'a> From<&'a ListedTask> for TaskSummary<'a> {
             task_key: &task.task_key,
             title: &task.title,
             status: task.status,
-            progress: &task.progress,
+            progress: task.progress.chars().take(120).collect(),
+            progress_truncated: task.progress.chars().count() > 120,
             branch: &task.branch,
             archived: task.archived,
             review_status: task.review_status,
             updated_at: &task.updated_at,
-            project_path: &listed.project_path,
+            project_path: Some(&listed.project_path),
             steps: (!task.steps.is_empty()).then(|| format!("{done}/{}", task.steps.len())),
             has_user_note: !task.user_note.is_empty(),
+            has_request: !task.request.is_empty(),
             needs_input: !task.needs_input.is_empty(),
         }
     }
@@ -323,16 +365,48 @@ fn list_tasks(db: &Database, mut arguments: Value) -> std::result::Result<Value,
         Some(Value::Bool(detail)) => Some(detail),
         Some(_) => return Err("Invalid tool arguments: detail must be a boolean".into()),
     };
+    let excludes_requested_done = object.get("include_done") == Some(&json!(false))
+        && object.get("status") == Some(&json!("done"));
+    if object.contains_key("task_key") {
+        // Exact identity reads are used to resume work and recover from conflicts.
+        // Explicit false values still narrow the caller's requested scope.
+        object.entry("include_done").or_insert(json!(true));
+        object.entry("include_archived").or_insert(json!(true));
+    }
     object.entry("limit").or_insert(json!(LIST_LIMIT));
     let input: ListTasks = serde_json::from_value(arguments)
         .map_err(|error| format!("Invalid tool arguments: {error}"))?;
     let detail = detail.unwrap_or(input.task_key.is_some());
-    let page = db.list(input).map_err(|error| error.to_string())?;
+    let scoped_path = input.project_path.clone();
+    let mut page = db.list(input).map_err(|error| error.to_string())?;
+    // Unlike an omitted flag, explicit false is a filter even alongside status=done.
+    if excludes_requested_done {
+        page.items.clear();
+        page.next_offset = None;
+    }
     let result = if detail {
         serde_json::to_value(&page)
     } else {
-        let items: Vec<TaskSummary> = page.items.iter().map(TaskSummary::from).collect();
-        serde_json::to_value(json!({"items": items, "next_offset": page.next_offset}))
+        let items: Vec<TaskSummary> = page
+            .items
+            .iter()
+            .map(|listed| {
+                let mut summary = TaskSummary::from(listed);
+                if scoped_path.is_some() {
+                    summary.project_path = None;
+                }
+                summary
+            })
+            .collect();
+        let mut result = json!({"items": items, "next_offset": page.next_offset});
+        if let Some(path) = scoped_path {
+            result["project_path"] = json!(page
+                .items
+                .first()
+                .map(|item| item.project_path.as_str())
+                .unwrap_or(&path));
+        }
+        Ok(result)
     };
     result.map_err(|error| format!("Cannot serialize result: {error}"))
 }
@@ -351,7 +425,7 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name":"task_upsert",
-            "description":"Create or update a tracked task by project_path+task_key. Create with a plan in steps. Afterwards update only at milestones (a step finished, a real blocker, done), never per edit or command or with unchanged state. Pass the last receipt's updated_at as expected_updated_at. done = awaiting human review. title/status/progress replace; omitted/null branch clears; agent/next_action/needs_input/deliverables/steps: omit keeps, send replaces. Single-line text.",
+            "description":"One designated Agent records each task by project_path+task_key; delegates report to it. Create with goal, acceptance and steps. Update only at completed steps, real blockers or done, never per command. Existing changes require expected_updated_at from the last receipt/read; on Conflict re-read the key. Use step_updates for changed steps. done awaits human review. title/status/progress replace; omitted/null branch clears; other optional fields omit keeps. Single-line text.",
             "inputSchema":{
                 "type":"object","additionalProperties":false,
                 "properties":{
@@ -360,11 +434,14 @@ pub fn tool_definitions() -> Vec<Value> {
                     "status":status,
                     "progress":text(600, "One-line summary of the latest milestone or blocker."),
                     "branch":{"type":["string","null"],"minLength":1,"maxLength":200},
-                    "agent":{"type":["string","null"],"maxLength":100},
+                    "agent":{"type":["string","null"],"maxLength":100,"description":"Your client name, e.g. Codex or Claude Code."},
                     "next_action":text(600, "Next step."),
                     "needs_input":text(600, "What the user must provide."),
                     "deliverables":{"type":"array","maxItems":5,"items":{"type":"object","additionalProperties":false,"properties":{"label":{"type":"string","minLength":1,"maxLength":100},"uri":{"type":"string","minLength":1,"maxLength":1000,"description":"File path or http(s) URL."}},"required":["label","uri"]}},
-                    "steps":{"type":"array","maxItems":12,"description":"Whole plan; resend all steps when one changes.","items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","minLength":1,"maxLength":120},"status":status,"note":{"type":"string","maxLength":200}},"required":["title","status"]}},
+                    "steps":{"type":"array","maxItems":12,"description":"Whole plan for creation or reordering; mutually exclusive with step_updates.","items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","minLength":1,"maxLength":120},"status":status,"note":{"type":"string","maxLength":200}},"required":["title","status"]}},
+                    "step_updates":{"type":"array","maxItems":12,"description":"Patch existing steps by zero-based index; status/note omit keeps, empty note clears. Requires status or note per item; unique valid indices.","items":{"type":"object","additionalProperties":false,"properties":{"index":{"type":"integer","minimum":0,"maximum":11},"status":status,"note":{"type":"string","maxLength":200}},"required":["index"],"anyOf":[{"required":["status"]},{"required":["note"]}]}},
+                    "goal":text(300, "What this task delivers and why, one or two sentences."),
+                    "acceptance":{"type":"array","maxItems":8,"description":"Checks the user can do to accept the result.","items":{"type":"string","minLength":1,"maxLength":160}},
                     "expected_updated_at":expected
                 },
                 "required":["project_path","task_key","title","status","progress"]
@@ -373,13 +450,14 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name":"task_list",
-            "description":"The user's task board. Tracking is automatic: at the start of any task that will modify files (code, config, docs), call this with project_path without being asked; skip Q&A, read-only work, or when the user says not to track. Reuse a matching task_key, else create auto:<short-slug> with task_upsert. Returns 5 unfinished one-line summaries per page (follow next_offset); an exact task_key or detail=true returns full records.",
+            "description":"For work that will modify files, one designated Agent calls this with project_path+query without being asked; skip Q&A, read-only work or user opt-out. Search a relevant keyword, do not scan all pages by default. Reuse a matching task_key, else create auto:<short-slug>. Returns 5 unfinished summaries; has_request/has_user_note or truncated progress: read the matching key before acting. Exact task_key returns full records including done/archived unless explicitly excluded.",
             "inputSchema":{
                 "type":"object","additionalProperties":false,
                 "properties":{
                     "project_path":project_path,"task_key":task_key,"status":status,
-                    "include_done":{"type":"boolean","default":false},
-                    "include_archived":{"type":"boolean","default":false},
+                    "query":{"type":"string","minLength":1,"maxLength":160,"description":"Literal keyword in key, title, goal, request, progress or user note."},
+                    "include_done":{"type":"boolean","description":"Default true with exact task_key, otherwise false."},
+                    "include_archived":{"type":"boolean","description":"Default true with exact task_key, otherwise false."},
                     "detail":{"type":"boolean"},
                     "limit":{"type":"integer","minimum":1,"maximum":100,"default":LIST_LIMIT},
                     "offset":{"type":"integer","minimum":0,"maximum":4294967295_u64,"default":0}
@@ -389,7 +467,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name":"task_archive",
-            "description":"Hide a task without deleting it, or restore with archived=false.",
+            "description":"Hide a task without deleting it, or restore with archived=false. Changes require expected_updated_at from the latest read/receipt; identical retries may omit it.",
             "inputSchema":{
                 "type":"object","additionalProperties":false,
                 "properties":{"project_path":project_path,"task_key":task_key,"archived":{"type":"boolean","default":true},"expected_updated_at":expected},

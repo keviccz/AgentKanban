@@ -39,7 +39,7 @@ fn v1_migration_preserves_tasks_settings_and_legacy_done_review_boundary() {
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        3
+        5
     );
     assert_eq!(db.revision().unwrap(), 17);
     assert_eq!(
@@ -100,6 +100,9 @@ fn v1_migration_preserves_tasks_settings_and_legacy_done_review_boundary() {
         needs_input: None,
         deliverables: None,
         steps: None,
+        step_updates: None,
+        goal: None,
+        acceptance: None,
         expected_updated_at: Some(legacy.updated_at.clone()),
     };
     let receipt = db.upsert(input).unwrap();
@@ -160,4 +163,23 @@ fn failed_migration_rolls_back_schema_and_original_data_before_retry() {
     let recovered = Database::open(path).unwrap();
     assert_eq!(recovered.board().unwrap().projects[0].tasks.len(), 2);
     assert_eq!(recovered.revision().unwrap(), 17);
+}
+
+#[test]
+fn migrated_legacy_done_tasks_are_never_auto_archived_without_human_acceptance() {
+    let (_root, path) = legacy_database();
+    let db = Database::open(path).unwrap();
+    assert_eq!(db.archive_finished(std::time::Duration::ZERO).unwrap(), 0);
+    let done = db
+        .list(ListTasks {
+            task_key: Some("legacy-done".into()),
+            include_done: true,
+            ..Default::default()
+        })
+        .unwrap()
+        .items
+        .remove(0)
+        .task;
+    assert!(!done.archived);
+    assert_eq!(done.review_status, ReviewStatus::None);
 }

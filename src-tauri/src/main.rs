@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod clients;
 mod integration;
 mod preferences;
 mod task_actions;
+mod watch;
 
 use kanban_core::{
     ArchiveById, BoardSnapshot, CaptureTask, Database, FeedbackTask, ReviewTask, TaskReceipt,
@@ -10,7 +12,7 @@ use kanban_core::{
 use preferences::Preferences;
 use serde::{Deserialize, Serialize};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex,
 };
 use tauri::{
@@ -25,6 +27,8 @@ use tauri_plugin_opener::OpenerExt;
 const SHORTCUT: &str = "Ctrl+Alt+K";
 const CREATE_SHORTCUT: &str = "Ctrl+Alt+N";
 const SHORTCUTS: [&str; 2] = [SHORTCUT, CREATE_SHORTCUT];
+/// Passed by the sign-in entry so the board can start in the tray.
+const AUTOSTART_ARG: &str = "--autostart";
 
 #[derive(Default)]
 struct DesktopErrors {
@@ -218,18 +222,107 @@ fn set_preferences(
         shortcut_enabled: previous.shortcut_enabled,
         ..preferences
     };
-    window
-        .set_always_on_top(next.always_on_top)
-        .map_err(error)?;
+    let apply = || -> Result<(), String> {
+        window
+            .set_always_on_top(next.always_on_top)
+            .map_err(error)?;
+        apply_appearance(&window, next.font_scale, next.opacity)?;
+        fit_window(&window, &next)
+    };
+    if let Err(err) = apply() {
+        let _ = window.set_always_on_top(previous.always_on_top);
+        let _ = apply_appearance(&window, previous.font_scale, previous.opacity);
+        let _ = fit_window(&window, &previous);
+        return Err(err);
+    }
     if let Err(err) = state
         .db
         .set_setting("ui", &serde_json::to_string(&next).map_err(error)?)
     {
         let _ = window.set_always_on_top(previous.always_on_top);
+        let _ = apply_appearance(&window, previous.font_scale, previous.opacity);
+        let _ = fit_window(&window, &previous);
         return Err(error(err));
     }
     *state.preferences.lock().map_err(error)? = next.clone();
     Ok(next)
+}
+
+/// Live preview while a slider moves; the value is saved through set_preferences.
+#[tauri::command]
+fn preview_appearance(window: WebviewWindow, font_scale: u32, opacity: u32) -> Result<(), String> {
+    if !(80..=130).contains(&font_scale) || !(50..=100).contains(&opacity) {
+        return Err("无效的显示设置".into());
+    }
+    apply_appearance(&window, font_scale, opacity)
+}
+
+fn fit_window(window: &WebviewWindow, preferences: &Preferences) -> Result<(), String> {
+    let (min_width, min_height) = preferences.minimum_window_size();
+    window
+        .set_min_size(Some(tauri::LogicalSize::new(min_width, min_height)))
+        .map_err(error)?;
+    let current = window
+        .inner_size()
+        .map_err(error)?
+        .to_logical::<f64>(window.scale_factor().map_err(error)?);
+    let height = if preferences.compact {
+        min_height
+    } else {
+        current.height.max(min_height)
+    };
+    if current.width < min_width || current.height != height {
+        window
+            .set_size(tauri::LogicalSize::new(
+                current.width.max(min_width),
+                height,
+            ))
+            .map_err(error)?;
+    }
+    Ok(())
+}
+
+fn apply_appearance(window: &WebviewWindow, font_scale: u32, opacity: u32) -> Result<(), String> {
+    window
+        .set_zoom(f64::from(font_scale) / 100.0)
+        .map_err(error)?;
+    set_window_opacity(window, opacity)
+}
+
+/// Whole-window alpha through a layered window; 100 removes the layer again.
+#[cfg(windows)]
+fn set_window_opacity(window: &WebviewWindow, opacity: u32) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA,
+        WS_EX_LAYERED,
+    };
+    let hwnd = window.hwnd().map_err(error)?.0;
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if opacity >= 100 {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style & !(WS_EX_LAYERED as isize));
+            return Ok(());
+        }
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED as isize);
+        let alpha = (opacity * 255 / 100) as u8;
+        if SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA) == 0 {
+            return Err("设置窗口透明度失败".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn set_window_opacity(_window: &WebviewWindow, _opacity: u32) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn get_task_reports(
+    state: State<AppState>,
+    id: i64,
+) -> Result<Vec<kanban_core::TaskReport>, String> {
+    state.db.reports(id).map_err(error)
 }
 
 #[tauri::command]
@@ -244,26 +337,24 @@ fn set_compact(
         return Ok(previous);
     }
     let geometry = state.geometry.lock().map_err(error)?.clone();
-    let width = geometry.width.max(320.0);
-    let height = if compact {
-        48.0
-    } else {
-        geometry.height.max(360.0)
-    };
     // Update before the resize event so compact height cannot replace expanded height.
     // Never hold the mutex over a native setter: Windows may synchronously emit Resized.
     let next = Preferences {
         compact,
         ..previous.clone()
     };
+    let (min_width, min_height) = next.minimum_window_size();
+    let width = geometry.width.max(min_width);
+    let height = if compact {
+        min_height
+    } else {
+        geometry.height.max(min_height)
+    };
     *state.preferences.lock().map_err(error)? = next.clone();
     let apply = || -> Result<(), String> {
         window.set_resizable(!compact).map_err(error)?;
         window
-            .set_min_size(Some(tauri::LogicalSize::new(
-                320.0,
-                if compact { 48.0 } else { 360.0 },
-            )))
+            .set_min_size(Some(tauri::LogicalSize::new(min_width, min_height)))
             .map_err(error)?;
         window
             .set_size(tauri::LogicalSize::new(width, height))
@@ -276,16 +367,17 @@ fn set_compact(
     if let Err(err) = apply() {
         *state.preferences.lock().map_err(error)? = previous.clone();
         let _ = window.set_resizable(!previous.compact);
+        let (previous_width, previous_height) = previous.minimum_window_size();
         let _ = window.set_min_size(Some(tauri::LogicalSize::new(
-            320.0,
-            if previous.compact { 48.0 } else { 360.0 },
+            previous_width,
+            previous_height,
         )));
         let _ = window.set_size(tauri::LogicalSize::new(
             width,
             if previous.compact {
-                48.0
+                previous_height
             } else {
-                geometry.height.max(360.0)
+                geometry.height.max(previous_height)
             },
         ));
         return Err(err);
@@ -465,6 +557,63 @@ async fn check_mcp(state: State<'_, AppState>) -> Result<integration::McpCheck, 
     Ok(integration::check(executable, data_dir).await)
 }
 
+#[tauri::command(async)]
+fn get_clients(state: State<AppState>) -> Result<Vec<clients::ClientStatus>, String> {
+    Ok(clients::statuses(&integration::server(&state.db)?))
+}
+
+#[tauri::command(async)]
+fn setup_client(state: State<AppState>, id: String) -> Result<clients::ClientStatus, String> {
+    clients::setup(&id, &integration::server(&state.db)?)
+}
+
+/// Shows one of the board's own files in Explorer; the frontend cannot name arbitrary paths.
+#[tauri::command(async)]
+fn reveal_path(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    target: String,
+) -> Result<(), String> {
+    let path = match target.as_str() {
+        "mcp" => integration::mcp_path()?,
+        "database" => state.db.path().to_path_buf(),
+        _ => return Err("未知位置".into()),
+    };
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|err| format!("打开位置失败：{err}"))
+}
+
+#[tauri::command(async)]
+fn backup_database(app: tauri::AppHandle, state: State<AppState>) -> Result<String, String> {
+    let directory = state
+        .db
+        .path()
+        .parent()
+        .ok_or("无法定位数据库目录")?
+        .join("backups");
+    std::fs::create_dir_all(&directory).map_err(|err| format!("无法创建备份目录：{err}"))?;
+    let target = write_backup(&state.db, &directory)?;
+    let _ = app.opener().reveal_item_in_dir(&target);
+    Ok(target.display().to_string())
+}
+
+fn write_backup(db: &Database, directory: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(error)?
+        .as_nanos();
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let target = directory.join(format!(
+        "agentkanban-{stamp}-{}-{sequence}.sqlite3",
+        std::process::id()
+    ));
+    db.backup_to(&target)
+        .map_err(|err| format!("备份失败：{err}"))?;
+    Ok(target)
+}
+
 fn run() -> tauri::Result<()> {
     let mut context = tauri::generate_context!();
     // Build the window below so the WebView builder can use an absolute data path.
@@ -476,15 +625,28 @@ fn run() -> tauri::Result<()> {
         if let Ok(port) = port.parse::<u16>() {
             context.config_mut().app.windows[0].additional_browser_args =
                 Some(format!("--remote-debugging-port={port}"));
+            // An explicit QA data directory gets a separate single-instance and
+            // autostart identity, so native tests never activate the user's board.
+            if std::env::var_os("AGENTKANBAN_DATA_DIR").is_some_and(|dir| !dir.is_empty()) {
+                context.config_mut().identifier = format!("local.agentkanban.qa{port}");
+                context.config_mut().product_name = Some(format!("AgentKanban QA {port}"));
+                context.config_mut().app.windows[0].title = format!("AgentKanban QA {port}");
+            }
         }
     }
+    let autostart_name = context
+        .config()
+        .product_name
+        .clone()
+        .unwrap_or_else(|| "AgentKanban".into());
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_window(app)
         }))
         .plugin(
             tauri_plugin_autostart::Builder::new()
-                .app_name("AgentKanban")
+                .app_name(autostart_name)
+                .arg(AUTOSTART_ARG)
                 .build(),
         )
         .plugin(
@@ -508,6 +670,9 @@ fn run() -> tauri::Result<()> {
         )
         .setup(|app| {
             let db = Database::open_default()?;
+            if let Err(err) = db.initialize_tutorial() {
+                eprintln!("Could not initialize the tutorial: {err}");
+            }
             let prefs: Preferences = db
                 .get_setting("ui")?
                 .and_then(|s| serde_json::from_str(&s).ok())
@@ -521,17 +686,18 @@ fn run() -> tauri::Result<()> {
                     .data_directory(Database::default_data_dir()?.join("webview"))
                     .build()?;
             window.set_always_on_top(prefs.always_on_top)?;
+            if let Err(err) = apply_appearance(&window, prefs.font_scale, prefs.opacity) {
+                eprintln!("Could not apply the saved size and opacity: {err}");
+            }
             window.set_resizable(!prefs.compact)?;
-            window.set_min_size(Some(tauri::LogicalSize::new(
-                320.0,
-                if prefs.compact { 48.0 } else { 360.0 },
-            )))?;
+            let (min_width, min_height) = prefs.minimum_window_size();
+            window.set_min_size(Some(tauri::LogicalSize::new(min_width, min_height)))?;
             window.set_size(tauri::LogicalSize::new(
-                geometry.width.max(320.0),
+                geometry.width.max(min_width),
                 if prefs.compact {
-                    48.0
+                    min_height
                 } else {
-                    geometry.height.max(360.0)
+                    geometry.height.max(min_height)
                 },
             ))?;
             if let (Some(x), Some(y)) = (geometry.x, geometry.y) {
@@ -553,6 +719,8 @@ fn run() -> tauri::Result<()> {
                 window.center()?;
             }
             let shortcut_enabled = prefs.shortcut_enabled;
+            let stay_in_tray =
+                prefs.start_hidden && std::env::args().any(|arg| arg == AUTOSTART_ARG);
             app.manage(AppState {
                 db,
                 preferences: Mutex::new(prefs),
@@ -563,6 +731,10 @@ fn run() -> tauri::Result<()> {
                 geometry_dirty: AtomicBool::new(false),
             });
 
+            // Rewrite an existing sign-in entry so older ones gain the tray argument.
+            if app.autolaunch().is_enabled().unwrap_or(false) {
+                let _ = app.autolaunch().enable();
+            }
             // Merely installing the autostart plugin preserves the OS setting.
             // A conflicting hotkey is visible in Settings but must never prevent startup.
             if shortcut_enabled {
@@ -624,7 +796,10 @@ fn run() -> tauri::Result<()> {
                     let _ = handle.emit("app-error", format!("窗口设置保存失败：{err}"));
                 }
             });
-            window.show()?;
+            watch::spawn(app.handle().clone());
+            if !stay_in_tray {
+                window.show()?;
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -683,7 +858,13 @@ fn run() -> tauri::Result<()> {
             set_autostart,
             set_shortcut_enabled,
             get_integration_info,
-            check_mcp
+            check_mcp,
+            get_clients,
+            setup_client,
+            reveal_path,
+            backup_database,
+            preview_appearance,
+            get_task_reports
         ])
         .build(context)?;
     app.run(|app, event| {
@@ -714,5 +895,48 @@ fn main() {
             }
         }
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rapid_backups_are_distinct_complete_snapshots() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("agentkanban-backup-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let db = Database::open(directory.join("source.sqlite3")).unwrap();
+        db.set_setting("test", "first").unwrap();
+        let first = write_backup(&db, &directory).unwrap();
+        db.set_setting("test", "second").unwrap();
+        let second = write_backup(&db, &directory).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            Database::open(&first)
+                .unwrap()
+                .get_setting("test")
+                .unwrap()
+                .as_deref(),
+            Some("first")
+        );
+        assert_eq!(
+            Database::open(&second)
+                .unwrap()
+                .get_setting("test")
+                .unwrap()
+                .as_deref(),
+            Some("second")
+        );
+        assert!(directory
+            .canonicalize()
+            .unwrap()
+            .starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

@@ -1,3 +1,4 @@
+use crate::clients::Server;
 use kanban_core::Database;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -14,20 +15,12 @@ use tokio::{
 };
 
 #[derive(Serialize)]
-pub(crate) struct ClientConfigs {
-    pub codex: String,
-    pub claude: String,
-    pub cursor: String,
-}
-
-#[derive(Serialize)]
 pub(crate) struct IntegrationInfo {
     app_version: String,
     mcp_path: String,
     mcp_exists: bool,
     database_path: String,
     last_task_update: Option<String>,
-    configs: ClientConfigs,
 }
 
 #[derive(Debug, Serialize)]
@@ -48,19 +41,26 @@ pub(crate) fn mcp_path() -> Result<PathBuf, String> {
 
 pub(crate) fn info(db: &Database, version: &str) -> Result<IntegrationInfo, String> {
     let executable = mcp_path()?;
-    let override_dir = std::env::var_os("AGENTKANBAN_DATA_DIR").filter(|value| !value.is_empty());
-    let data_dir = if override_dir.is_some() {
-        Some(db.path().parent().ok_or("无法定位数据库目录")?)
-    } else {
-        None
-    };
     Ok(IntegrationInfo {
         app_version: version.to_string(),
         mcp_path: path_text(&executable)?,
         mcp_exists: executable.is_file(),
         database_path: path_text(db.path())?,
         last_task_update: db.last_task_update().map_err(|err| err.to_string())?,
-        configs: client_configs(&executable, data_dir)?,
+    })
+}
+
+/// How clients should start this board's MCP server. A custom data directory
+/// (tests, isolated boards) travels with the entry so both sides share one board.
+pub(crate) fn server(db: &Database) -> Result<Server, String> {
+    let mut env = BTreeMap::new();
+    if std::env::var_os("AGENTKANBAN_DATA_DIR").is_some_and(|value| !value.is_empty()) {
+        let directory = db.path().parent().ok_or("无法定位数据库目录")?;
+        env.insert("AGENTKANBAN_DATA_DIR".to_string(), path_text(directory)?);
+    }
+    Ok(Server {
+        command: path_text(&mcp_path()?)?,
+        env,
     })
 }
 
@@ -68,43 +68,6 @@ fn path_text(path: &Path) -> Result<String, String> {
     path.to_str()
         .map(str::to_owned)
         .ok_or_else(|| "路径包含无法表示的 Unicode 字符".to_string())
-}
-
-fn client_configs(executable: &Path, data_dir: Option<&Path>) -> Result<ClientConfigs, String> {
-    #[derive(Serialize)]
-    struct StdioConfig {
-        command: String,
-        args: Vec<String>,
-        #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-        env: BTreeMap<String, String>,
-    }
-    #[derive(Serialize)]
-    struct CodexConfig {
-        mcp_servers: BTreeMap<String, StdioConfig>,
-    }
-    let mut env = BTreeMap::new();
-    if let Some(directory) = data_dir {
-        env.insert("AGENTKANBAN_DATA_DIR".to_string(), path_text(directory)?);
-    }
-    let server = StdioConfig {
-        command: path_text(executable)?,
-        args: Vec::new(),
-        env,
-    };
-    let mut json_server = serde_json::to_value(&server).map_err(|err| err.to_string())?;
-    json_server["type"] = json!("stdio");
-    let json_config =
-        serde_json::to_string_pretty(&json!({"mcpServers":{"agentkanban":json_server}}))
-            .map_err(|err| err.to_string())?;
-    let codex = toml::to_string_pretty(&CodexConfig {
-        mcp_servers: BTreeMap::from([("agentkanban".to_string(), server)]),
-    })
-    .map_err(|err| err.to_string())?;
-    Ok(ClientConfigs {
-        codex,
-        claude: json_config.clone(),
-        cursor: json_config,
-    })
 }
 
 pub(crate) async fn check(executable: PathBuf, data_dir: PathBuf) -> McpCheck {
@@ -251,39 +214,6 @@ fn validate_tools(result: &Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn generated_configs_round_trip_unicode_spaces_quotes_and_data_override() {
-        let command = "C:\\中文项目\\O'Brien\\quote\"folder\\agentkanban-mcp.exe";
-        let directory = "C:\\数据目录\\a'b\"c\\任务";
-        let configs = client_configs(Path::new(command), Some(Path::new(directory))).unwrap();
-        let codex: toml::Value = toml::from_str(&configs.codex).unwrap();
-        assert_eq!(
-            codex["mcp_servers"]["agentkanban"]["command"].as_str(),
-            Some(command)
-        );
-        assert_eq!(
-            codex["mcp_servers"]["agentkanban"]["env"]["AGENTKANBAN_DATA_DIR"].as_str(),
-            Some(directory)
-        );
-        for encoded in [configs.claude, configs.cursor] {
-            let config: Value = serde_json::from_str(&encoded).unwrap();
-            let server = &config["mcpServers"]["agentkanban"];
-            assert_eq!(server["command"], command);
-            assert_eq!(server["env"]["AGENTKANBAN_DATA_DIR"], directory);
-            assert_eq!(server["type"], "stdio");
-            assert_eq!(server["args"], json!([]));
-        }
-    }
-
-    #[test]
-    fn default_data_directory_does_not_emit_a_test_override() {
-        let configs = client_configs(Path::new("C:\\Apps\\agentkanban-mcp.exe"), None).unwrap();
-        let codex: toml::Value = toml::from_str(&configs.codex).unwrap();
-        assert!(codex["mcp_servers"]["agentkanban"].get("env").is_none());
-        let claude: Value = serde_json::from_str(&configs.claude).unwrap();
-        assert!(claude["mcpServers"]["agentkanban"].get("env").is_none());
-    }
 
     #[test]
     fn self_check_rejects_missing_duplicate_extra_and_malformed_tools() {
