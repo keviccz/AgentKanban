@@ -583,3 +583,35 @@ fn restoration_works_after_project_directory_disappears_and_resets_auto_archive_
     assert!(!task.archived);
     assert_eq!(task.review_status, ReviewStatus::Accepted);
 }
+
+#[test]
+fn archive_project_hides_every_board_task_and_each_restores_on_its_own() {
+    let fixture = Fixture::new();
+    let working = fixture.seed("project:working", Status::InProgress);
+    fixture.seed("project:done", Status::Done);
+    fixture.archive(fixture.seed("project:already", Status::Todo));
+    let project_id = fixture.task("project:working").project_id;
+    let revision = fixture.db.revision().unwrap();
+
+    assert_eq!(fixture.db.archive_project(project_id).unwrap(), 2);
+    assert_eq!(fixture.db.revision().unwrap(), revision + 1);
+    assert!(fixture.db.board().unwrap().projects.is_empty());
+    let task = fixture.task("project:working");
+    assert!(task.archived);
+    assert_eq!(task.status, Status::InProgress);
+
+    // Nothing left to archive: no revision bump, and bad ids are rejected.
+    assert_eq!(fixture.db.archive_project(project_id).unwrap(), 0);
+    assert_eq!(fixture.db.revision().unwrap(), revision + 1);
+    assert!(matches!(fixture.db.archive_project(0), Err(Error::InvalidInput(_))));
+
+    fixture
+        .db
+        .restore_by_id(ArchiveById {
+            id: working.id,
+            expected_updated_at: task.updated_at,
+        })
+        .unwrap();
+    assert!(!fixture.task("project:working").archived);
+    assert!(fixture.task("project:done").archived);
+}

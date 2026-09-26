@@ -213,7 +213,8 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
 .text-button.danger { color: var(--amber); font-weight: 600; }
 .capture-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 
-.range-setting { padding: 2px 0 6px; }
+.range-setting { padding: 0; }
+.range-setting .setting-row { min-height: 30px; }
 .preset-group { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
 .preset-group button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; padding: 3px 10px; cursor: pointer; }
 .preset-group button + button { border-left: 1px solid var(--line); }
@@ -251,7 +252,6 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
   .report dl > div { grid-template-columns: 56px minmax(0, 1fr); }
 }
 
-.update-current { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; text-align: right; }
 .update-status { margin: 8px 0; font-size: 13px; line-height: 1.7; }
 .update-checked time { white-space: normal; }
 .update-progress progress { width: 100%; height: 8px; accent-color: var(--teal); }
@@ -307,8 +307,10 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
   .project-focus { gap: 7px; }
 }
 
-.setting-row + .setting-row { margin-top: 8px; }
-.github-button { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; padding: 7px 12px; border-radius: 5px; font-size: 12px; font-weight: 600; color: #fff; background: #24292f; }
+/* One rhythm for every row in a settings section, whether it holds a select, a toggle or a slider. */
+.settings-section > :is(.setting-row, .range-setting) + :is(.setting-row, .range-setting) { margin-top: 10px; }
+.setting-row > select { flex: 0 0 auto; width: 13.5em; text-overflow: ellipsis; }
+.github-button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 5px; font-size: 12px; font-weight: 600; color: #fff; background: #24292f; }
 .github-button svg { width: 15px; height: 15px; flex-shrink: 0; }
 .github-button:hover { background: #32383f; }
 :root[data-theme="dark"] .github-button { background: #f0f3f6; color: #24292f; }
@@ -347,3 +349,5 @@ button, .task-open, select, input, textarea { transition: background-color .14s 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after, .panel[open]::backdrop { animation: none !important; transition: none !important; }
 }
+.panel-heading[data-tauri-drag-region] { cursor: default; user-select: none; }
+.task-menu button.danger { color: var(--amber); font-weight: 600; }

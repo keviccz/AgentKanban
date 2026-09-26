@@ -24,10 +24,12 @@ enum Need {
 }
 
 impl Need {
-    fn label(self) -> &'static str {
-        match self {
-            Need::Blocked => "受阻",
-            Need::Input => "需要你补充",
+    fn label(self, english: bool) -> &'static str {
+        match (self, english) {
+            (Need::Blocked, false) => "受阻",
+            (Need::Input, false) => "需要你补充",
+            (Need::Blocked, true) => "Blocked",
+            (Need::Input, true) => "Needs your input",
         }
     }
 }
@@ -113,7 +115,7 @@ pub(crate) fn spawn(app: AppHandle) {
                                 .filter(|(id, alert)| previous.get(id) != Some(&alert.need))
                                 .map(|(_, alert)| alert)
                                 .collect();
-                            notify(&app, &fresh);
+                            notify(&app, &fresh, preferences.english());
                         }
                         known = Some(alerts.iter().map(|(id, alert)| (*id, alert.need)).collect());
                     }
@@ -124,22 +126,21 @@ pub(crate) fn spawn(app: AppHandle) {
     });
 }
 
-fn notify(app: &AppHandle, fresh: &[&Alert]) {
-    let show = |title: String, body: String| toast(app, &title, &body);
+fn notify(app: &AppHandle, fresh: &[&Alert], english: bool) {
+    let show = |title: String, body: String| toast(app, &title, &body, english);
     if fresh.len() > SEPARATE_LIMIT {
-        show(
-            format!("{} 个任务等你处理", fresh.len()),
-            fresh
-                .iter()
-                .map(|alert| alert.title.as_str())
-                .collect::<Vec<_>>()
-                .join("、"),
-        );
+        let titles = fresh.iter().map(|alert| alert.title.as_str()).collect::<Vec<_>>();
+        if english {
+            show(format!("{} tasks need you", fresh.len()), titles.join(", "));
+        } else {
+            show(format!("{} 个任务等你处理", fresh.len()), titles.join("、"));
+        }
         return;
     }
     for alert in fresh {
+        let separator = if english { ": " } else { "：" };
         show(
-            format!("{}：{}", alert.need.label(), alert.title),
+            format!("{}{separator}{}", alert.need.label(english), alert.title),
             alert.detail.clone(),
         );
     }
@@ -148,7 +149,7 @@ fn notify(app: &AppHandle, fresh: &[&Alert]) {
 /// A reminder toast stays on screen until the user acts on it; clicking it or
 /// "打开看板" brings the board forward.
 #[cfg(windows)]
-fn toast(app: &AppHandle, title: &str, body: &str) {
+fn toast(app: &AppHandle, title: &str, body: &str, english: bool) {
     use tauri_winrt_notification::{Scenario, Sound, Toast};
     let handle = app.clone();
     let shown = Toast::new(&app.config().identifier)
@@ -156,8 +157,8 @@ fn toast(app: &AppHandle, title: &str, body: &str) {
         .text1(body)
         .scenario(Scenario::Reminder)
         .sound(Some(Sound::Default))
-        .add_button("打开看板", "open")
-        .add_button("稍后", "later")
+        .add_button(if english { "Open board" } else { "打开看板" }, "open")
+        .add_button(if english { "Later" } else { "稍后" }, "later")
         .on_activated(move |action| {
             if action.as_deref() != Some("later") {
                 crate::show_window(&handle);
@@ -171,6 +172,6 @@ fn toast(app: &AppHandle, title: &str, body: &str) {
 }
 
 #[cfg(not(windows))]
-fn toast(_app: &AppHandle, title: &str, body: &str) {
+fn toast(_app: &AppHandle, title: &str, body: &str, _english: bool) {
     eprintln!("{title}: {body}");
 }

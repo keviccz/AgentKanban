@@ -1,12 +1,13 @@
 import type { Filter, Project, Task } from './types';
+import { t } from './i18n';
 
 export function relativeTime(timestamp: string, now: number) {
   const minutes = Math.max(0, Math.floor((now - Date.parse(timestamp)) / 60000));
-  if (!Number.isFinite(minutes)) return '时间未知';
-  if (minutes < 1) return '刚刚';
-  if (minutes < 60) return `${minutes} 分钟前`;
-  if (minutes < 1440) return `${Math.floor(minutes / 60)} 小时前`;
-  return `${Math.floor(minutes / 1440)} 天前`;
+  if (!Number.isFinite(minutes)) return t("时间未知");
+  if (minutes < 1) return t("刚刚");
+  if (minutes < 60) return t("{0} 分钟前", minutes);
+  if (minutes < 1440) return t("{0} 小时前", Math.floor(minutes / 60));
+  return t("{0} 天前", Math.floor(minutes / 1440));
 }
 
 export function isStale(task: Task, hours: number, now: number) {

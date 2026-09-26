@@ -97,6 +97,27 @@ impl Database {
         })
     }
 
+    /// Archive every task still on the board for one project, as one user action.
+    /// Each task keeps its status, review and reports, and restores individually.
+    pub fn archive_project(&self, project_id: i64) -> Result<usize> {
+        if project_id <= 0 {
+            return Err(Error::InvalidInput(
+                "project_id must be a positive project identifier".into(),
+            ));
+        }
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let archived = tx.execute(
+            "UPDATE tasks SET archived=1,updated_at=?1 WHERE project_id=?2 AND archived=0",
+            params![changed_at(None), project_id],
+        )?;
+        if archived > 0 {
+            tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
+        }
+        tx.commit()?;
+        Ok(archived)
+    }
+
     /// Restore the existing row as a human action. Project identity, task contents,
     /// reports, review state, and Agent activity remain unchanged. A fresh updated_at
     /// also restarts the inactivity period for accepted tasks' automatic archiving.

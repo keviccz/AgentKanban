@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { checkUpdates, downloadUpdate, installUpdate, native, onUpdateStatus, openExternalLink, readUpdateStatus } from './bridge';
 import type { Preferences, UpdateStatus } from './types';
+import { locale, t } from './i18n';
 
 const phaseLabels: Record<UpdateStatus['phase'], string> = {
   idle: '更新检查', checking: '正在检查更新…', available: '发现新版本',
@@ -17,8 +18,8 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function Updates({ preferences, disabled, currentVersion, update, onLater }: {
-  preferences: Preferences; disabled: boolean; currentVersion: string | null;
+export function Updates({ preferences, disabled, update, onLater }: {
+  preferences: Preferences; disabled: boolean;
   update: (patch: Partial<Preferences>) => void; onLater: () => void;
 }) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
@@ -43,7 +44,7 @@ export function Updates({ preferences, disabled, currentVersion, update, onLater
       try {
         const next = await readUpdateStatus();
         if (!disposed && version === eventVersion.current) { setStatus(next); setReadError(''); }
-      } catch (e) { if (!disposed && version === eventVersion.current) setReadError(`读取更新状态失败：${String(e)}`); }
+      } catch (e) { if (!disposed && version === eventVersion.current) setReadError(t("读取更新状态失败：{0}", String(e))); }
       finally { if (!disposed) setReading(false); }
     }
     // Native owns checks and downloads; leaving Settings only removes this listener.
@@ -56,7 +57,7 @@ export function Updates({ preferences, disabled, currentVersion, update, onLater
       unlisten = stop; setListenError(''); void read();
     }, e => {
       if (disposed) return;
-      setListenError(`更新状态自动刷新不可用：${String(e)}`); void read();
+      setListenError(t("更新状态自动刷新不可用：{0}", String(e))); void read();
     });
     return () => { disposed = true; mounted.current = false; unlisten?.(); };
   }, [attempt]);
@@ -69,7 +70,7 @@ export function Updates({ preferences, disabled, currentVersion, update, onLater
       const next = await (kind === 'check' ? checkUpdates(true) : kind === 'download' ? downloadUpdate() : installUpdate());
       if (mounted.current && version === eventVersion.current) setStatus(next);
     } catch (e) {
-      if (mounted.current) { setActionError(`操作失败：${String(e)}`); setAttempt(value => value + 1); }
+      if (mounted.current) { setActionError(t("操作失败：{0}", String(e))); setAttempt(value => value + 1); }
     } finally {
       inFlight.current = false;
       if (mounted.current) setAction(null);
@@ -86,37 +87,37 @@ export function Updates({ preferences, disabled, currentVersion, update, onLater
 
   return <div className="updates">
     <section className="settings-section">
-      <div className="section-heading"><h3>软件更新</h3><span className="update-current">当前 {status?.current_version || currentVersion || '—'}</span></div>
-      {!native ? <p className="hint">请在桌面版检查 GitHub Releases 和安装更新。</p> : <>
-        <p className={`update-status ${errorState ? 'panel-error' : phase === 'available' || phase === 'ready' ? 'connection-ok' : ''}`} role="status">{reading && !status ? '正在读取更新状态…' : phaseLabels[phase]}</p>
-        {status?.message && <p className={errorState ? 'panel-error' : 'hint'}>{status.message}</p>}
-        {status && !status.message && phase === 'idle' && <p className="hint">{status.checked_at ? '本次检查没有可安装的新版本。' : '尚未检查更新。'}</p>}
-        {status?.checked_at && <p className="hint update-checked">上次检查：<time dateTime={status.checked_at}>{new Date(status.checked_at).toLocaleString('zh-CN')}</time></p>}
+      <h3>{t("软件更新")}</h3>
+      {!native ? <p className="hint">{t("请在桌面版检查 GitHub Releases 和安装更新。")}</p> : <>
+        <p className={`update-status ${errorState ? 'panel-error' : phase === 'available' || phase === 'ready' ? 'connection-ok' : ''}`} role="status">{reading && !status ? t("正在读取更新状态…") : t(phaseLabels[phase])}</p>
+        {status?.message && <p className={errorState ? 'panel-error' : 'hint'}>{t(status.message)}</p>}
+        {status && !status.message && phase === 'idle' && <p className="hint">{status.checked_at ? t("本次检查没有可安装的新版本。") : t("尚未检查更新。")}</p>}
+        {status?.checked_at && <p className="hint update-checked">{t("上次检查：")}<time dateTime={status.checked_at}>{new Date(status.checked_at).toLocaleString(locale())}</time></p>}
         {phase === 'downloading' && <div className="update-progress">
-          <progress aria-label="更新下载进度" max={total ?? 1} value={total ? Math.min(downloaded, total) : undefined} />
-          <p>{total ? `${formatBytes(downloaded)} / ${formatBytes(total)}（${Math.min(100, Math.floor(downloaded / total * 100))}%）` : `已下载 ${formatBytes(downloaded)}，总大小未知`}</p>
-          <p className="hint">返回看板后会继续下载，安装前仍需你确认。</p>
+          <progress aria-label={t("更新下载进度")} max={total ?? 1} value={total ? Math.min(downloaded, total) : undefined} />
+          <p>{total ? t("{0} / {1}（{2}%）", formatBytes(downloaded), formatBytes(total), Math.min(100, Math.floor(downloaded / total * 100))) : t("已下载 {0}，总大小未知", formatBytes(downloaded))}</p>
+          <p className="hint">{t("返回看板后会继续下载，安装前仍需你确认。")}</p>
         </div>}
-        {phase === 'ready' && <p className="hint">点击安装后会退出看板并启动安装程序；任务数据保留。</p>}
-        {phase === 'blocked' && <p className="hint">可稍后重试安装；完全退出应用后需要重新下载。</p>}
-        {phase === 'installing' && <p className="hint">请等待安装程序完成；当前显示的版本尚未更新。</p>}
+        {phase === 'ready' && <p className="hint">{t("点击安装后会退出看板并启动安装程序；任务数据保留。")}</p>}
+        {phase === 'blocked' && <p className="hint">{t("可稍后重试安装；完全退出应用后需要重新下载。")}</p>}
+        {phase === 'installing' && <p className="hint">{t("请等待安装程序完成；当前显示的版本尚未更新。")}</p>}
         {(readError || listenError || actionError) && <div className="update-error" role="alert">
           {readError && <p className="panel-error">{readError}</p>}{listenError && <p className="panel-error">{listenError}</p>}{actionError && <p className="panel-error">{actionError}</p>}
-          {(readError || listenError) && <button className="text-button" disabled={reading} onClick={() => setAttempt(value => value + 1)}>重新读取更新状态</button>}
+          {(readError || listenError) && <button className="text-button" disabled={reading} onClick={() => setAttempt(value => value + 1)}>{t("重新读取更新状态")}</button>}
         </div>}
-        <div className="form-actions">
-          <button className="outline-button" disabled={reading || active} onClick={() => void run('check')}>{phase === 'checking' || action === 'check' ? '正在检查…' : phase === 'error' && !status?.version ? '重试检查' : '检查更新'}</button>
-          {canDownload && <button className="primary-button" disabled={reading || active} onClick={() => void run('download')}>{phase === 'error' ? '重试下载' : '后台下载'}</button>}
-          {canInstall && <button className="primary-button" disabled={reading || active} onClick={() => void run('install')}>{phase === 'blocked' ? '重试安装' : '安装更新'}</button>}
-          {phase === 'blocked' && <button className="text-button" onClick={onLater}>稍后</button>}
+        <div className="form-actions end">
+          <button className="outline-button" disabled={reading || active} onClick={() => void run('check')}>{phase === 'checking' || action === 'check' ? t("正在检查…") : phase === 'error' && !status?.version ? t("重试检查") : t("检查更新")}</button>
+          {canDownload && <button className="primary-button" disabled={reading || active} onClick={() => void run('download')}>{phase === 'error' ? t("重试下载") : t("后台下载")}</button>}
+          {canInstall && <button className="primary-button" disabled={reading || active} onClick={() => void run('install')}>{phase === 'blocked' ? t("重试安装") : t("安装更新")}</button>}
+          {phase === 'blocked' && <button className="text-button" onClick={onLater}>{t("稍后")}</button>}
           <button className="github-button" title={RELEASES_URL} onClick={() => void openExternalLink(RELEASES_URL).catch(e => setActionError(String(e)))}><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d={GITHUB_MARK} /></svg>GitHub</button>
         </div>
-        {status?.version && <section className="update-release"><h4>最新版本 {status.version}</h4><details open><summary>更新说明</summary><p>{status.notes || '此版本未提供更新说明。'}</p></details></section>}
+        {status?.version && <section className="update-release"><h4>{t("最新版本")} {status.version}</h4><details open><summary>{t("更新说明")}</summary><p>{status.notes || t("此版本未提供更新说明。")}</p></details></section>}
       </>}
     </section>
-    <section className="settings-section"><h3>更新偏好</h3>
-      <label className="setting-row"><span>自动检查更新<small>后台检查 GitHub Releases</small></span><input type="checkbox" checked={preferences.auto_check_updates ?? true} disabled={!native || disabled} onChange={event => update({ auto_check_updates: event.target.checked })} /></label>
-      <label className="setting-row"><span>自动后台下载<small>发现新版本时下载，安装仍由你确认</small></span><input type="checkbox" checked={preferences.auto_download_updates ?? false} disabled={!native || disabled} onChange={event => update({ auto_download_updates: event.target.checked })} /></label>
+    <section className="settings-section"><h3>{t("更新偏好")}</h3>
+      <label className="setting-row"><span>{t("自动检查更新")}<small>{t("后台检查 GitHub Releases")}</small></span><input type="checkbox" checked={preferences.auto_check_updates ?? true} disabled={!native || disabled} onChange={event => update({ auto_check_updates: event.target.checked })} /></label>
+      <label className="setting-row"><span>{t("自动后台下载")}<small>{t("发现新版本时下载，安装仍由你确认")}</small></span><input type="checkbox" checked={preferences.auto_download_updates ?? false} disabled={!native || disabled} onChange={event => update({ auto_download_updates: event.target.checked })} /></label>
     </section>
   </div>;
 }

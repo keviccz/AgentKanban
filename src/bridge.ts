@@ -29,6 +29,7 @@ export const readWindowVisible = (): Promise<boolean> => native ? getCurrentWind
 export const createTask = (input: CaptureInput): Promise<TaskReceipt> => invoke('create_task', { input });
 export const reviewTask = (id: number, expected_updated_at: string, accepted: boolean, note: string): Promise<TaskReceipt> => invoke('review_task', { input: { id, expected_updated_at, accepted, note } });
 export const sendFeedback = (id: number, expected_updated_at: string, note: string): Promise<TaskReceipt> => invoke('send_task_feedback', { input: { id, expected_updated_at, note } });
+export const archiveProject = (projectId: number): Promise<number> => invoke('archive_project', { projectId });
 export const archiveTask = (id: number, expected_updated_at: string): Promise<TaskReceipt> => invoke('archive_task', { input: { id, expected_updated_at } });
 export const readTrackingPaused = (): Promise<boolean> => native ? invoke('get_tracking_paused') : Promise.resolve(false);
 export const setTrackingPaused = (paused: boolean): Promise<boolean> => invoke('set_tracking_paused', { paused });

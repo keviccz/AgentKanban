@@ -34,6 +34,7 @@ export interface Preferences {
   font_scale: number; opacity: number;
   auto_check_updates: boolean; auto_download_updates: boolean;
   project_sort: 'recent' | 'name';
+  language: 'auto' | 'zh' | 'en';
 }
 export const defaults: Preferences = {
   theme: 'light', always_on_top: true, compact: false, concise: false, filter: 'all',
@@ -43,6 +44,7 @@ export const defaults: Preferences = {
   font_scale: 100, opacity: 100,
   auto_check_updates: true, auto_download_updates: false,
   project_sort: 'recent',
+  language: 'auto',
 };
 export interface IntegrationInfo {
   app_version: string; mcp_path: string; mcp_exists: boolean; database_path: string;

@@ -170,6 +170,11 @@ fn archive_task(state: State<AppState>, input: ArchiveById) -> Result<TaskReceip
 }
 
 #[tauri::command(async)]
+fn archive_project(state: State<AppState>, project_id: i64) -> Result<usize, String> {
+    state.db.archive_project(project_id).map_err(error)
+}
+
+#[tauri::command(async)]
 fn list_archived_tasks(
     state: State<AppState>,
     input: kanban_core::ArchiveQuery,
@@ -267,7 +272,34 @@ fn set_preferences(
         return Err(error(err));
     }
     *state.preferences.lock().map_err(error)? = next.clone();
+    if next.english() != previous.english() {
+        relabel_tray(window.app_handle(), next.english());
+    }
     Ok(next)
+}
+
+const TRAY_ID: &str = "main";
+
+fn tray_tooltip(english: bool) -> &'static str {
+    if english { "AgentKanban · updated by your Agents" } else { "AgentKanban · 由 Agent 更新" }
+}
+
+fn tray_menu(app: &tauri::AppHandle, english: bool) -> tauri::Result<Menu<tauri::Wry>> {
+    let text = |zh: &'static str, en: &'static str| if english { en } else { zh };
+    let show = MenuItem::with_id(app, "show", text("显示看板", "Show board"), true, None::<&str>)?;
+    let create = MenuItem::with_id(app, "new_task", text("新建任务", "New task"), true, None::<&str>)?;
+    let hide = MenuItem::with_id(app, "hide", text("隐藏看板", "Hide board"), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", text("退出 AgentKanban", "Quit AgentKanban"), true, None::<&str>)?;
+    Menu::with_items(app, &[&show, &create, &hide, &quit])
+}
+
+/// A language switch in Settings takes effect in the tray without a restart.
+fn relabel_tray(app: &tauri::AppHandle, english: bool) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    if let Ok(menu) = tray_menu(app, english) {
+        let _ = tray.set_menu(Some(menu));
+    }
+    let _ = tray.set_tooltip(Some(tray_tooltip(english)));
 }
 
 /// Live preview while a slider moves; the value is saved through set_preferences.
@@ -773,14 +805,11 @@ fn run() -> tauri::Result<()> {
                 }
             }
 
-            let show = MenuItem::with_id(app, "show", "显示看板", true, None::<&str>)?;
-            let create = MenuItem::with_id(app, "new_task", "新建任务", true, None::<&str>)?;
-            let hide = MenuItem::with_id(app, "hide", "隐藏看板", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "退出 AgentKanban", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &create, &hide, &quit])?;
-            TrayIconBuilder::new()
+            let english = app.state::<AppState>().preferences.lock().map_err(error)?.english();
+            let menu = tray_menu(app.handle(), english)?;
+            TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().ok_or("missing app icon")?.clone())
-                .tooltip("AgentKanban · 由 Agent 更新")
+                .tooltip(tray_tooltip(english))
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -871,6 +900,7 @@ fn run() -> tauri::Result<()> {
             review_task,
             send_task_feedback,
             archive_task,
+            archive_project,
             list_archived_tasks,
             restore_archived_task,
             get_tracking_paused,

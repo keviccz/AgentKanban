@@ -1,40 +1,50 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { archiveTask, compactWindow, hideWindow, listArchivedTasks, native, onError, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, readTrackingPaused, readWindowVisible, restoreArchivedTask, reviewTask, savePreferences, setTrackingPaused } from './bridge';
+import { archiveProject, archiveTask, compactWindow, hideWindow, listArchivedTasks, native, onError, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, readTrackingPaused, readWindowVisible, restoreArchivedTask, reviewTask, savePreferences, setTrackingPaused } from './bridge';
 import { defaults, isTutorialProject, isTutorialTask, labels, type ArchivedTask, type CaptureInput, type Filter, type Preferences, type Project, type Snapshot, type Task, type TaskReceipt } from './types';
 import { awaitsReview, changedAt, inActiveList, isStale, matchesFilter, matchesSearch, needsAttention, normalizeFilter, relativeTime, reviewLabels, stepProgress } from './display';
 import { Settings } from './Panels';
 import { Icon } from './Icon';
 import { CapturePanel, TaskDetails, type FeedbackDraft } from './Workflows';
+import { locale, resolveLanguage, setLanguage, t, type Language } from './i18n';
 
 const filterLabels: Record<Filter, string> = { all: '全部', attention: '等你处理', in_progress: '进行中', recent: '最近变更' };
 const SLOGAN = 'Agent 推进，你来验收。';
 
 type OpenMenu = (id: number, x: number, y: number) => void;
 
-const TaskRow = memo(function TaskRow({ task, tutorial, concise, recent, now, staleHours, onOpen, onMenu }: { task: Task; tutorial: boolean; concise: boolean; recent: boolean; now: number; staleHours: number; onOpen: (id: number) => void; onMenu: OpenMenu }) {
+// `language` is only a memo key: rows must re-render when the interface language changes.
+const TaskRow = memo(function TaskRow({ task, tutorial, concise, recent, now, staleHours, onOpen, onMenu }: { language: Language; task: Task; tutorial: boolean; concise: boolean; recent: boolean; now: number; staleHours: number; onOpen: (id: number) => void; onMenu: OpenMenu }) {
   const timestamp = recent ? task.updated_at : task.agent_updated_at ?? task.updated_at;
-  const timeTitle = `${recent ? '最近变更' : !tutorial && task.agent_updated_at ? 'Agent 最后上报' : '记录时间'}：${new Date(timestamp).toLocaleString('zh-CN')}`;
+  const timeTitle = t("{0}：{1}", recent ? t("最近变更") : !tutorial && task.agent_updated_at ? t("Agent 最后上报") : t("记录时间"), new Date(timestamp).toLocaleString(locale()));
   const pending = awaitsReview(task);
   const steps = concise ? '' : stepProgress(task);
-  const statusLabel = concise && pending ? '未验收' : concise && task.review_status === 'accepted' ? '已验收' : labels[task.status];
+  const statusLabel = concise && pending ? t("未验收") : concise && task.review_status === 'accepted' ? t("已验收") : t(labels[task.status]);
   return <li className={`task task-${task.status} ${concise ? 'task-concise' : ''} ${recent ? 'task-recent' : ''}`} onContextMenu={event => {
     event.preventDefault();
     // The keyboard menu key reports no pointer position; anchor to the row instead.
     const box = event.currentTarget.getBoundingClientRect();
     onMenu(task.id, event.clientX || box.left + 24, event.clientY || box.top + 24);
   }}>
-    <button className="task-open" aria-label={`查看任务：${task.title}`} title={pending ? 'Agent 已完成，你尚未验收。右键可一键验收或归档' : undefined} onClick={() => onOpen(task.id)}>
+    <button className="task-open" aria-label={t("查看任务：{0}", task.title)} title={pending ? t("Agent 已完成，你尚未验收。右键可一键验收或归档") : undefined} onClick={() => onOpen(task.id)}>
       <span className="task-heading"><span className="task-title" title={recent ? `${task.title}\n${timeTitle}` : task.title}>{task.title}</span><span className={`status ${task.status} ${concise && pending ? 'review-pending' : ''}`}><span className="status-dot" />{statusLabel}</span></span>
       {!concise && <>
-      <span className="progress" title={task.progress}>{task.progress || '尚未补充进展'}</span>
-      {(task.agent || task.review_status !== 'none' || task.needs_input || steps || task.review_withdrawn_at) && <span className="task-signals">{steps && <span className="step-count" title="计划步骤完成数">{steps} 步</span>}{task.review_withdrawn_at && <span className="review-badge withdrawn" title="Agent 在你验收前重新打开了任务">已撤回验收</span>}{task.review_status !== 'none' && <span className={`review-badge ${task.review_status}`}>{reviewLabels[task.review_status]}</span>}{task.needs_input && <span className="input-signal">需要你补充</span>}{task.agent && <span className="agent-name" title={tutorial ? '教学示例' : `最后上报：${task.agent}`}>{task.agent}</span>}</span>}
-      <span className="task-meta">{task.branch ? <span className="branch" title={task.branch}><Icon name="branch" /><span>{task.branch}</span></span> : <span>{!tutorial && !task.agent_updated_at ? '等待 Agent 接手' : ''}</span>}<span className="update-time">{!tutorial && isStale(task, staleHours, now) && <span className="stale" title="已超过设置的时间未收到更新；任务状态保持不变。">较久未更新</span>}<time dateTime={timestamp} title={timeTitle}>{recent && '最近变更 '}{relativeTime(timestamp, now)}</time></span></span>
+      <span className="progress" title={task.progress}>{task.progress || t("尚未补充进展")}</span>
+      {(task.agent || task.review_status !== 'none' || task.needs_input || steps || task.review_withdrawn_at) && <span className="task-signals">{steps && <span className="step-count" title={t("计划步骤完成数")}>{steps} {t("步")}</span>}{task.review_withdrawn_at && <span className="review-badge withdrawn" title={t("Agent 在你验收前重新打开了任务")}>{t("已撤回验收")}</span>}{task.review_status !== 'none' && <span className={`review-badge ${task.review_status}`}>{t(reviewLabels[task.review_status])}</span>}{task.needs_input && <span className="input-signal">{t("需要你补充")}</span>}{task.agent && <span className="agent-name" title={tutorial ? t("教学示例") : t("最后上报：{0}", task.agent)}>{task.agent}</span>}</span>}
+      <span className="task-meta">{task.branch ? <span className="branch" title={task.branch}><Icon name="branch" /><span>{task.branch}</span></span> : <span>{!tutorial && !task.agent_updated_at ? t("等待 Agent 接手") : ''}</span>}<span className="update-time">{!tutorial && isStale(task, staleHours, now) && <span className="stale" title={t("已超过设置的时间未收到更新；任务状态保持不变。")}>{t("较久未更新")}</span>}<time dateTime={timestamp} title={timeTitle}>{recent && t("最近变更 ")}{relativeTime(timestamp, now)}</time></span></span>
       </>}
     </button>
   </li>;
 });
 
-function TaskMenu({ task, x, y, onAct, onClose }: { task: Task; x: number; y: number; onAct: (action: 'accept' | 'archive') => void; onClose: () => void }) {
+function ProjectMenu({ project, x, y, onArchive, onClose }: { project: Project; x: number; y: number; onArchive: () => void; onClose: () => void }) {
+  // Archiving a whole project is a bigger step than one task, so it asks once more.
+  const [confirming, setConfirming] = useState(false);
+  return <FloatingMenu label={t("项目操作：{0}", project.name)} x={x} y={y} onClose={onClose}>
+    <button role="menuitem" className={confirming ? 'danger' : ''} title={t("该项目的任务移到归档，可在归档中心逐条恢复")} onClick={() => confirming ? onArchive() : setConfirming(true)}>{confirming ? t("确认归档 {0} 个任务？", project.tasks.length) : t("归档项目")}</button>
+  </FloatingMenu>;
+}
+
+function FloatingMenu({ label, x, y, onClose, children }: { label: string; x: number; y: number; onClose: () => void; children: React.ReactNode }) {
   const menu = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: x, top: y });
   useLayoutEffect(() => {
@@ -59,11 +69,15 @@ function TaskMenu({ task, x, y, onAct, onClose }: { task: Task; x: number; y: nu
       document.removeEventListener('scroll', onClose, true);
     };
   }, [onClose]);
+  return <div ref={menu} className="task-menu" role="menu" aria-label={label} style={position} onContextMenu={event => event.preventDefault()}>{children}</div>;
+}
+
+function TaskMenu({ task, x, y, onAct, onClose }: { task: Task; x: number; y: number; onAct: (action: 'accept' | 'archive') => void; onClose: () => void }) {
   const reviewable = awaitsReview(task);
-  return <div ref={menu} className="task-menu" role="menu" aria-label={`任务操作：${task.title}`} style={position} onContextMenu={event => event.preventDefault()}>
-    <button role="menuitem" disabled={!reviewable} title={reviewable ? '直接通过验收，不填写意见' : task.status === 'done' ? '该任务无需验收' : '任务尚未完成'} onClick={() => onAct('accept')}>一键验收</button>
-    <button role="menuitem" title="移到本项目的「已归档」，可随时恢复" onClick={() => onAct('archive')}>直接归档</button>
-  </div>;
+  return <FloatingMenu label={t("任务操作：{0}", task.title)} x={x} y={y} onClose={onClose}>
+    <button role="menuitem" disabled={!reviewable} title={reviewable ? t("直接通过验收，不填写意见") : task.status === 'done' ? t("该任务无需验收") : t("任务尚未完成")} onClick={() => onAct('accept')}>{t("一键验收")}</button>
+    <button role="menuitem" title={t("移到本项目的「已归档」，可随时恢复")} onClick={() => onAct('archive')}>{t("直接归档")}</button>
+  </FloatingMenu>;
 }
 
 /** Archived tasks of one project, loaded only while the group is open. */
@@ -82,7 +96,7 @@ function ArchivedGroup({ project, busy, onChanged }: { project: Project; busy: b
       const page = await listArchivedTasks({ project_id: project.id, limit: 20, offset });
       if (current !== request.current) return;
       setItems(previous => offset ? [...previous, ...page.items] : page.items); setNext(page.next_offset);
-    } catch (e) { if (current === request.current) setError(`读取归档失败：${String(e)}`); }
+    } catch (e) { if (current === request.current) setError(t("读取归档失败：{0}", String(e))); }
     finally { if (current === request.current) setLoading(false); }
   }, [project.id]);
   // A new archive or restore changes the count; reload from the start.
@@ -90,25 +104,26 @@ function ArchivedGroup({ project, busy, onChanged }: { project: Project; busy: b
   async function restore(task: ArchivedTask) {
     setRestoring(task.id); setError('');
     try { await restoreArchivedTask(task.id, task.updated_at); await onChanged(); }
-    catch (e) { setError(`恢复失败：${String(e)}`); void load(0); }
+    catch (e) { setError(t("恢复失败：{0}", String(e))); void load(0); }
     finally { setRestoring(null); }
   }
   return <div className="completed archived-group">
-    <button className="disclosure completed-toggle" disabled={busy} aria-expanded={open} onClick={() => setOpen(value => !value)}><Icon name="chevron" className={open ? 'rotated' : ''} />已归档 <span>{project.archived_count}</span></button>
+    <button className="disclosure completed-toggle" disabled={busy} aria-expanded={open} onClick={() => setOpen(value => !value)}><Icon name="chevron" className={open ? 'rotated' : ''} />{t("已归档")} <span>{project.archived_count}</span></button>
     {open && <>
       <ul className="archived-list">{items.map(task => <li key={task.id}>
         <span className="archived-title" title={task.title}>{task.title}</span>
-        <span className="archived-state">{labels[task.status]}{task.status === 'done' && task.review_status !== 'none' ? ` · ${reviewLabels[task.review_status]}` : ''}</span>
-        <button className="text-button" disabled={restoring !== null} onClick={() => void restore(task)}>{restoring === task.id ? '恢复中…' : '恢复'}</button>
+        <span className="archived-state">{t(labels[task.status])}{task.status === 'done' && task.review_status !== 'none' ? ` · ${t(reviewLabels[task.review_status])}` : ''}</span>
+        <button className="text-button" disabled={restoring !== null} onClick={() => void restore(task)}>{restoring === task.id ? t("恢复中…") : t("恢复")}</button>
       </li>)}</ul>
-      {loading && !items.length && <p className="archived-note">正在读取…</p>}
-      {next !== null && <button className="disclosure more" disabled={loading} onClick={() => void load(next)}>{loading ? '正在读取…' : '加载更多'}</button>}
+      {loading && !items.length && <p className="archived-note">{t("正在读取…")}</p>}
+      {next !== null && <button className="disclosure more" disabled={loading} onClick={() => void load(next)}>{loading ? t("正在读取…") : t("加载更多")}</button>}
       {error && <p className="panel-error" role="alert">{error}</p>}
     </>}
   </div>;
 }
 
-function ProjectSection({ project, preferences, searching, update, now, busy, onOpen, onMenu, onChanged }: { project: Project; preferences: Preferences; searching: boolean; update: (p: Partial<Preferences>) => void; now: number; busy: boolean; onOpen: (id: number) => void; onMenu: OpenMenu; onChanged: () => Promise<void> }) {
+function ProjectSection({ project, preferences, searching, update, now, busy, onOpen, onMenu, onProjectMenu, onChanged }: { project: Project; preferences: Preferences; searching: boolean; update: (p: Partial<Preferences>) => void; now: number; busy: boolean; onOpen: (id: number) => void; onMenu: OpenMenu; onProjectMenu: OpenMenu; onChanged: () => Promise<void> }) {
+  const language = resolveLanguage(preferences.language);
   const recent = preferences.filter === 'recent';
   const forceExpanded = searching || recent;
   const active = project.tasks.filter(inActiveList);
@@ -120,10 +135,14 @@ function ProjectSection({ project, preferences, searching, update, now, busy, on
   const toggle = (key: 'collapsed_projects' | 'completed_projects' | 'pinned_projects') => update({ [key]: preferences[key].includes(project.id) ? preferences[key].filter(id => id !== project.id) : [...preferences[key], project.id] });
   const heading = <><Icon name="chevron" className={!collapsed ? 'rotated' : ''} /><h2>{project.name}</h2><span className="project-count">{rows.length}</span></>;
   return <section className="project" aria-label={project.name}>
-    <div className="project-header">{forceExpanded ? <div className="project-heading project-heading-static" title={`${project.path}\n${recent ? '最近变更' : '搜索'}视图临时展开，原折叠设置保留`}>{heading}</div> : <button className="project-heading" disabled={busy} aria-expanded={!collapsed} title={project.path} onClick={() => toggle('collapsed_projects')}>{heading}</button>}<button className={`icon-button project-pin ${pinned ? 'is-pinned' : ''}`} aria-pressed={pinned} aria-label={`${pinned ? '取消置顶项目' : '置顶项目'}：${project.name}`} title={recent ? '最近变更视图按时间排序，原置顶设置保留' : pinned ? '取消项目置顶' : '将项目排在前面'} disabled={busy || recent} onClick={() => toggle('pinned_projects')}><Icon name="pin" /></button></div>
+    <div className="project-header" onContextMenu={event => {
+      event.preventDefault();
+      const box = event.currentTarget.getBoundingClientRect();
+      onProjectMenu(project.id, event.clientX || box.left + 24, event.clientY || box.bottom);
+    }}>{forceExpanded ? <div className="project-heading project-heading-static" title={t("{0}\n{1}视图临时展开，原折叠设置保留", project.path, recent ? t("最近变更") : t("搜索"))}>{heading}</div> : <button className="project-heading" disabled={busy} aria-expanded={!collapsed} title={project.path} onClick={() => toggle('collapsed_projects')}>{heading}</button>}<button className={`icon-button project-pin ${pinned ? 'is-pinned' : ''}`} aria-pressed={pinned} aria-label={t("{0}：{1}", pinned ? t("取消置顶项目") : t("置顶项目"), project.name)} title={recent ? t("最近变更视图按时间排序，原置顶设置保留") : pinned ? t("取消项目置顶") : t("将项目排在前面")} disabled={busy || recent} onClick={() => toggle('pinned_projects')}><Icon name="pin" /></button></div>
     {!collapsed && <div className="project-content">
-      <ul className="task-list">{rows.map(task => <TaskRow key={task.id} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={recent} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>
-      {!forceExpanded && preferences.filter === 'all' && done.length > 0 && <div className="completed"><button className="disclosure completed-toggle" disabled={busy} aria-expanded={completed} onClick={() => toggle('completed_projects')}><Icon name="chevron" className={completed ? 'rotated' : ''} />已完成 <span>{done.length}</span></button>{completed && <ul className="task-list">{done.map(task => <TaskRow key={task.id} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={false} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>}</div>}
+      <ul className="task-list">{rows.map(task => <TaskRow key={task.id} language={language} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={recent} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>
+      {!forceExpanded && preferences.filter === 'all' && done.length > 0 && <div className="completed"><button className="disclosure completed-toggle" disabled={busy} aria-expanded={completed} onClick={() => toggle('completed_projects')}><Icon name="chevron" className={completed ? 'rotated' : ''} />{t("已完成")} <span>{done.length}</span></button>{completed && <ul className="task-list">{done.map(task => <TaskRow key={task.id} language={language} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={false} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>}</div>}
       {native && !forceExpanded && preferences.filter === 'all' && project.archived_count > 0 && <ArchivedGroup project={project} busy={busy} onChanged={onChanged} />}
     </div>}
   </section>;
@@ -149,6 +168,7 @@ export function App() {
   const [pauseError, setPauseError] = useState('');
   const [pauseBusy, setPauseBusy] = useState(false);
   const [menu, setMenu] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [projectMenu, setProjectMenu] = useState<{ id: number; x: number; y: number } | null>(null);
   const [reloading, setReloading] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -167,6 +187,7 @@ export function App() {
   const locked = compactBusy || !preferencesReady;
   const preferencesRef = useRef(preferences);
   preferencesRef.current = preferences;
+  setLanguage(resolveLanguage(preferences.language));
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
 
@@ -220,18 +241,28 @@ export function App() {
         const next = await readSnapshot();
         applySnapshot(next);
       }
-      setError(previous => previous.startsWith('读取失败') || previous.startsWith('启动失败') || previous.startsWith('任务已保存，读取失败') ? '' : previous);
-    } catch (e) { setError(`读取失败：${String(e)}`); }
+      setError(previous => previous.startsWith(t("读取失败")) || previous.startsWith(t("启动失败")) || previous.startsWith(t("任务已保存，读取失败")) ? '' : previous);
+    } catch (e) { setError(t("读取失败：{0}", String(e))); }
     finally { refreshBusy.current = false; }
   }, [applySnapshot, reloadPreferences]);
 
   const refreshAfterWrite = useCallback(async () => {
     try { applySnapshot(await readSnapshot()); setError(''); }
-    catch (e) { setError(`读取失败：${String(e)}`); }
+    catch (e) { setError(t("读取失败：{0}", String(e))); }
   }, [applySnapshot]);
 
   const openMenu = useCallback<OpenMenu>((id, x, y) => { if (native) setMenu({ id, x, y }); }, []);
   const closeMenu = useCallback(() => setMenu(null), []);
+  const openProjectMenu = useCallback<OpenMenu>((id, x, y) => { if (native) { setMenu(null); setProjectMenu({ id, x, y }); } }, []);
+  const closeProjectMenu = useCallback(() => setProjectMenu(null), []);
+  async function archiveWholeProject(projectId: number) {
+    setProjectMenu(null);
+    if (taskActionBusy.current) return;
+    taskActionBusy.current = true;
+    try { await archiveProject(projectId); await refreshAfterWrite(); }
+    catch (e) { setError(t("归档项目失败：{0}", String(e))); }
+    finally { taskActionBusy.current = false; }
+  }
   async function menuAction(task: Task, action: 'accept' | 'archive') {
     setMenu(null);
     if (taskActionBusy.current) return;
@@ -239,7 +270,7 @@ export function App() {
     try {
       await (action === 'accept' ? reviewTask(task.id, task.updated_at, true, '') : archiveTask(task.id, task.updated_at));
       await refreshAfterWrite();
-    } catch (e) { setError(`${action === 'accept' ? '验收' : '归档'}失败：${String(e)}`); }
+    } catch (e) { setError(t("{0}失败：{1}", action === 'accept' ? t("验收") : t("归档"), String(e))); }
     finally { taskActionBusy.current = false; }
   }
 
@@ -247,7 +278,7 @@ export function App() {
     try {
       const next = await readSnapshot(); applySnapshot(next);
       setSelectedTaskId(receipt.id); setError('');
-    } catch (e) { setError(`任务已保存，读取失败：${String(e)}`); }
+    } catch (e) { setError(t("任务已保存，读取失败：{0}", String(e))); }
     finally { setCaptureOpen(false); setCaptureDraft(null); }
   }
 
@@ -264,7 +295,7 @@ export function App() {
       if (prefs.status === 'fulfilled' && generation === preferencesGeneration.current) applyPreferences(prefs.value);
       if (board.status === 'fulfilled') applySnapshot(board.value);
       const failures = [prefs, board].filter(result => result.status === 'rejected').map(result => String(result.reason));
-      if (failures.length) setError(`启动失败：${failures.join('；')}`);
+      if (failures.length) setError(t("启动失败：{0}", failures.join(t("；"))));
       setReady(true);
     });
     return () => { disposed = true; subscriptions.forEach(p => void p.then(unlisten => unlisten())); };
@@ -293,7 +324,7 @@ export function App() {
 
   const reloadPause = useCallback(async () => {
     try { setPausedState(await readTrackingPaused()); setPauseReady(true); setPauseError(''); }
-    catch (e) { setPauseError(`读取记录状态失败：${String(e)}`); }
+    catch (e) { setPauseError(t("读取记录状态失败：{0}", String(e))); }
   }, []);
 
   useEffect(() => { void reloadPause(); }, [reloadPause]);
@@ -314,7 +345,7 @@ export function App() {
     if (pauseBusy || !pauseReady) return;
     setPauseBusy(true);
     try { setPausedState(await setTrackingPaused(!trackingPaused)); setPauseError(''); }
-    catch (e) { setPauseError(`切换记录状态失败：${String(e)}`); }
+    catch (e) { setPauseError(t("切换记录状态失败：{0}", String(e))); }
     finally { setPauseBusy(false); }
   }
 
@@ -338,11 +369,11 @@ export function App() {
           activePreferencePatch.current = {};
           if (generation === preferencesGeneration.current) applyPreferences(next);
           else await reloadPreferences();
-          if (!failed) setError(previous => previous.startsWith('设置保存失败') ? '' : previous);
+          if (!failed) setError(previous => previous.startsWith(t("设置保存失败")) ? '' : previous);
         } catch (e) {
           failed = true; activePreferencePatch.current = {};
           applyPreferences(confirmedPreferences.current);
-          setError(`设置保存失败：${String(e)}`);
+          setError(t("设置保存失败：{0}", String(e)));
         }
       }
     } finally { preferenceWriteBusy.current = false; setSaving(false); }
@@ -353,7 +384,7 @@ export function App() {
     setCompactBusy(true);
     const generation = preferencesGeneration.current;
     try { const next = native ? await compactWindow(!preferences.compact) : { ...preferences, compact: !preferences.compact }; if (generation === preferencesGeneration.current) applyPreferences(next); else await reloadPreferences(); }
-    catch (e) { setError(`窗口切换失败：${String(e)}`); }
+    catch (e) { setError(t("窗口切换失败：{0}", String(e))); }
     finally { setCompactBusy(false); }
   }
 
@@ -380,40 +411,42 @@ export function App() {
     ? changedAt(b.tasks[0]) - changedAt(a.tasks[0]) || a.id - b.id
     : Number(preferences.pinned_projects.includes(b.id)) - Number(preferences.pinned_projects.includes(a.id))
       || (preferences.project_sort === 'name'
-        ? a.name.localeCompare(b.name, 'zh-CN', { sensitivity: 'base', numeric: true }) || a.id - b.id
+        ? a.name.localeCompare(b.name, locale(), { sensitivity: 'base', numeric: true }) || a.id - b.id
         : latestChange.get(b.id)! - latestChange.get(a.id)! || a.id - b.id)), [projectsInScope, preferences.filter, preferences.pinned_projects, preferences.project_sort, recent, latestChange]);
   const matchingCount = visibleProjects.reduce((count, project) => count + project.tasks.length, 0);
   const selectedProject = snapshot.projects.find(project => project.tasks.some(task => task.id === selectedTaskId));
   const selectedTask = selectedProject?.tasks.find(task => task.id === selectedTaskId);
+  const menuProject = projectMenu ? snapshot.projects.find(project => project.id === projectMenu.id) : undefined;
   const menuTask = menu ? snapshot.projects.flatMap(project => project.tasks).find(task => task.id === menu.id) : undefined;
   useEffect(() => {
     if (ready && selectedTaskId !== null && !selectedTask) setSelectedTaskId(null);
   }, [ready, selectedTaskId, selectedTask]);
   const controls = <>
-    {!preferences.compact && <><button className={`icon-button ${preferences.always_on_top ? 'is-pinned' : ''}`} title={preferences.always_on_top ? '取消置顶' : '窗口置顶'} aria-label={preferences.always_on_top ? '取消置顶' : '窗口置顶'} aria-pressed={preferences.always_on_top} disabled={locked} onClick={() => void update({ always_on_top: !preferences.always_on_top })}><Icon name="pin" /></button><button className="icon-button" title={preferences.theme === 'light' ? '切换深色' : '切换浅色'} aria-label={preferences.theme === 'light' ? '切换深色' : '切换浅色'} disabled={locked} onClick={() => void update({ theme: preferences.theme === 'light' ? 'dark' : 'light' })}><Icon name={preferences.theme === 'light' ? 'moon' : 'sun'} /></button><button className={`icon-button view-toggle ${preferences.concise ? 'is-active' : ''}`} title={preferences.concise ? '切换详细模式' : '切换简洁模式：仅标题和状态'} aria-label={preferences.concise ? '切换详细模式' : '切换简洁模式'} aria-pressed={preferences.concise} disabled={locked} onClick={() => void update({ concise: !preferences.concise })}><Icon name="list" /></button></>}
-    <button className="icon-button" aria-label={preferences.compact ? '展开看板' : '收成窄条'} title={preferences.compact ? '展开看板' : '收成窄条'} disabled={busy} onClick={() => void toggleCompact()}><Icon name={preferences.compact ? 'expand' : 'minus'} /></button>
-    <button className="icon-button close-button" aria-label="隐藏到托盘" title={native ? '隐藏到托盘（从托盘恢复）' : '浏览器预览不能隐藏到托盘'} disabled={!native} onClick={() => void hideWindow().catch(e => setError(String(e)))}><Icon name="close" /></button>
+    {!preferences.compact && <><button className={`icon-button ${preferences.always_on_top ? 'is-pinned' : ''}`} title={preferences.always_on_top ? t("取消置顶") : t("窗口置顶")} aria-label={preferences.always_on_top ? t("取消置顶") : t("窗口置顶")} aria-pressed={preferences.always_on_top} disabled={locked} onClick={() => void update({ always_on_top: !preferences.always_on_top })}><Icon name="pin" /></button><button className="icon-button" title={preferences.theme === 'light' ? t("切换深色") : t("切换浅色")} aria-label={preferences.theme === 'light' ? t("切换深色") : t("切换浅色")} disabled={locked} onClick={() => void update({ theme: preferences.theme === 'light' ? 'dark' : 'light' })}><Icon name={preferences.theme === 'light' ? 'moon' : 'sun'} /></button><button className={`icon-button view-toggle ${preferences.concise ? 'is-active' : ''}`} title={preferences.concise ? t("切换详细模式") : t("切换简洁模式：仅标题和状态")} aria-label={preferences.concise ? t("切换详细模式") : t("切换简洁模式")} aria-pressed={preferences.concise} disabled={locked} onClick={() => void update({ concise: !preferences.concise })}><Icon name="list" /></button></>}
+    <button className="icon-button" aria-label={preferences.compact ? t("展开看板") : t("收成窄条")} title={preferences.compact ? t("展开看板") : t("收成窄条")} disabled={busy} onClick={() => void toggleCompact()}><Icon name={preferences.compact ? 'expand' : 'minus'} /></button>
+    <button className="icon-button close-button" aria-label={t("隐藏到托盘")} title={native ? t("隐藏到托盘（从托盘恢复）") : t("浏览器预览不能隐藏到托盘")} disabled={!native} onClick={() => void hideWindow().catch(e => setError(String(e)))}><Icon name="close" /></button>
   </>;
 
   return <main className={`app ${preferences.compact ? 'compact' : ''} ${preferences.concise ? 'concise' : ''}`}>
     <header className="titlebar" data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region><Icon name="logo" /><span data-tauri-drag-region>AgentKanban</span></div>
-      {preferences.compact && <div className="strip-counts" data-tauri-drag-region><span className="in_progress">{ongoing} 进行中</span><span className="blocked">{attention} 等你处理</span>{trackingPaused && <span className="paused-chip" title="Agent 记录已暂停">已暂停</span>}</div>}
+      {preferences.compact && <div className="strip-counts" data-tauri-drag-region><span className="in_progress">{ongoing} {t("进行中")}</span><span className="blocked">{attention} {t("等你处理")}</span>{trackingPaused && <span className="paused-chip" title={t("Agent 记录已暂停")}>{t("已暂停")}</span>}</div>}
       <div className="window-actions">{controls}</div>
     </header>
     {!preferences.compact && <>
-      {(snapshot.projects.length > 0 || focusActive || searchOpen) && <div className="project-focus"><select aria-label="聚焦项目" value={searching ? '' : preferences.focused_project ?? ''} title={searching ? '搜索期间查找全部项目，清空搜索后恢复原聚焦' : undefined} disabled={locked || searching} onChange={event => void update({ focused_project: event.target.value ? Number(event.target.value) : null })}><option value="">{searching ? '搜索全部项目' : '全部项目'} · {snapshot.projects.length}</option>{focusActive && !focusedProject && <option value={preferences.focused_project!}>聚焦的项目暂无任务</option>}{snapshot.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select>{focusActive && !searching && <button className="text-button" disabled={locked} onClick={() => void update({ focused_project: null })}>查看全部</button>}<button ref={searchButton} className={`icon-button search-toggle ${searchOpen ? 'is-active' : ''}`} aria-label={searchOpen ? '收起查找' : '查找任务'} aria-expanded={searchOpen} aria-controls="board-search" title={searchOpen ? '收起查找并清空搜索' : '查找任务（Ctrl+F）'} disabled={!ready} onClick={() => searchOpen ? closeSearch() : revealSearch()}><Icon name="search" /></button><button className={`icon-button refresh-button ${reloading ? 'is-spinning' : ''}`} aria-label="刷新看板" title="刷新任务状态" disabled={!ready || reloading} onClick={() => void manualRefresh()}><Icon name="refresh" /></button></div>}
-      {searchOpen && <div id="board-search" className="board-search"><div className="board-search-row"><input ref={searchInput} type="search" maxLength={160} aria-label="搜索全部项目" placeholder="搜索任务或项目" value={searchText} onChange={event => setSearchText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSearch(); } }} /><button className="text-button" disabled={!searchText} onClick={() => { setSearchText(''); searchInput.current?.focus(); }}>清空搜索</button></div>{searching && <p className="search-scope">搜索全部项目（不含归档） · {matchingCount} 项匹配</p>}</div>}
-      <nav className="filters" aria-label="按状态筛选" title="等你处理：受阻或需要你补充。已完成的任务直接变灰，可右键一键验收。最近变更含 Agent 和用户操作，按任务最近变更时间排列。">{(['all', 'attention', 'in_progress', 'recent'] as Filter[]).map(filter => <button key={filter} disabled={locked} aria-pressed={preferences.filter === filter} className={preferences.filter === filter ? 'selected' : ''} onClick={() => void update({ filter })}>{filterLabels[filter]}{filterCounts[filter] !== null && <span className={`filter-count ${filter === 'attention' && attention > 0 ? 'blocked' : ''}`}>{filterCounts[filter]}</span>}</button>)}</nav>
-      {trackingPaused && <div className="paused-banner" role="status" title="Agent 照常工作；恢复后在下个正常里程碑或新任务恢复记录，不回补暂停期间。"><span className="paused-dot" aria-hidden="true" /><span className="paused-text"><strong>记录已暂停</strong> · Agent 照常工作</span><button disabled={pauseBusy} onClick={() => void togglePause()}>恢复记录</button></div>}
-      {(error || pauseError) && <div className="error" role="alert"><span title={[error, pauseError].filter(Boolean).join('；')}>{[error, pauseError].filter(Boolean).join('；')}</span><button onClick={() => void retryRead()}>重试</button></div>}
-      <div className="board" aria-label="项目任务" aria-busy={!ready}>
-        {recent && <p className="board-view-hint">按最近变更排序并临时展开，含 Agent 和用户操作；此视图不按置顶排序。</p>}
-        {!ready ? <div className="empty"><p>正在读取看板…</p></div> : visibleProjects.length ? visibleProjects.map(project => <ProjectSection key={project.id} project={project} preferences={preferences} searching={searching} update={p => void update(p)} now={now} busy={locked} onOpen={setSelectedTaskId} onMenu={openMenu} onChanged={refreshAfterWrite} />) : <div className="empty"><Icon name="logo" /><h2>{searching ? '没有匹配的任务' : snapshot.projects.length ? `没有${preferences.filter === 'all' ? '' : filterLabels[preferences.filter]}的任务` : SLOGAN}</h2>{searching ? <><p>已搜索全部项目，当前状态筛选为“{filterLabels[preferences.filter]}”。</p><button className="outline-button empty-create" onClick={() => { setSearchText(''); searchInput.current?.focus(); }}>清空搜索</button></> : snapshot.projects.length && preferences.filter !== 'all' ? <button className="outline-button empty-create" disabled={locked} onClick={() => void update({ filter: 'all' })}>查看全部</button> : <button className="outline-button empty-create" disabled={!native} onClick={openCapture}>新建任务</button>}{!native && <p className="preview-note">浏览器布局预览 · 请启动桌面版连接本地看板</p>}</div>}
+      {(snapshot.projects.length > 0 || focusActive || searchOpen) && <div className="project-focus"><select aria-label={t("聚焦项目")} value={searching ? '' : preferences.focused_project ?? ''} title={searching ? t("搜索期间查找全部项目，清空搜索后恢复原聚焦") : undefined} disabled={locked || searching} onChange={event => void update({ focused_project: event.target.value ? Number(event.target.value) : null })}><option value="">{searching ? t("搜索全部项目") : t("全部项目")} · {snapshot.projects.length}</option>{focusActive && !focusedProject && <option value={preferences.focused_project!}>{t("聚焦的项目暂无任务")}</option>}{snapshot.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select>{focusActive && !searching && <button className="text-button" disabled={locked} onClick={() => void update({ focused_project: null })}>{t("查看全部")}</button>}<button ref={searchButton} className={`icon-button search-toggle ${searchOpen ? 'is-active' : ''}`} aria-label={searchOpen ? t("收起查找") : t("查找任务")} aria-expanded={searchOpen} aria-controls="board-search" title={searchOpen ? t("收起查找并清空搜索") : t("查找任务（Ctrl+F）")} disabled={!ready} onClick={() => searchOpen ? closeSearch() : revealSearch()}><Icon name="search" /></button><button className={`icon-button refresh-button ${reloading ? 'is-spinning' : ''}`} aria-label={t("刷新看板")} title={t("刷新任务状态")} disabled={!ready || reloading} onClick={() => void manualRefresh()}><Icon name="refresh" /></button></div>}
+      {searchOpen && <div id="board-search" className="board-search"><div className="board-search-row"><input ref={searchInput} type="search" maxLength={160} aria-label={t("搜索全部项目")} placeholder={t("搜索任务或项目")} value={searchText} onChange={event => setSearchText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSearch(); } }} /><button className="text-button" disabled={!searchText} onClick={() => { setSearchText(''); searchInput.current?.focus(); }}>{t("清空搜索")}</button></div>{searching && <p className="search-scope">{t("搜索全部项目（不含归档） · {0} 项匹配", matchingCount)}</p>}</div>}
+      <nav className="filters" aria-label={t("按状态筛选")} title={t("等你处理：受阻或需要你补充。已完成的任务直接变灰，可右键一键验收。最近变更含 Agent 和用户操作，按任务最近变更时间排列。")}>{(['all', 'attention', 'in_progress', 'recent'] as Filter[]).map(filter => <button key={filter} disabled={locked} aria-pressed={preferences.filter === filter} className={preferences.filter === filter ? 'selected' : ''} onClick={() => void update({ filter })}>{t(filterLabels[filter])}{filterCounts[filter] !== null && <span className={`filter-count ${filter === 'attention' && attention > 0 ? 'blocked' : ''}`}>{filterCounts[filter]}</span>}</button>)}</nav>
+      {trackingPaused && <div className="paused-banner" role="status" title={t("Agent 照常工作；恢复后在下个正常里程碑或新任务恢复记录，不回补暂停期间。")}><span className="paused-dot" aria-hidden="true" /><span className="paused-text"><strong>{t("记录已暂停")}</strong> {t("· Agent 照常工作")}</span><button disabled={pauseBusy} onClick={() => void togglePause()}>{t("恢复记录")}</button></div>}
+      {(error || pauseError) && <div className="error" role="alert"><span title={[error, pauseError].filter(Boolean).join(t("；"))}>{[error, pauseError].filter(Boolean).join(t("；"))}</span><button onClick={() => void retryRead()}>{t("重试")}</button></div>}
+      <div className="board" aria-label={t("项目任务")} aria-busy={!ready}>
+        {recent && <p className="board-view-hint">{t("按最近变更排序并临时展开，含 Agent 和用户操作；此视图不按置顶排序。")}</p>}
+        {!ready ? <div className="empty"><p>{t("正在读取看板…")}</p></div> : visibleProjects.length ? visibleProjects.map(project => <ProjectSection key={project.id} project={project} preferences={preferences} searching={searching} update={p => void update(p)} now={now} busy={locked} onOpen={setSelectedTaskId} onMenu={openMenu} onProjectMenu={openProjectMenu} onChanged={refreshAfterWrite} />) : <div className="empty"><Icon name="logo" /><h2>{searching ? t("没有匹配的任务") : snapshot.projects.length ? t("没有{0}的任务", preferences.filter === 'all' ? '' : t(filterLabels[preferences.filter])) : t(SLOGAN)}</h2>{searching ? <><p>{t("已搜索全部项目，当前状态筛选为“{0}”。", t(filterLabels[preferences.filter]))}</p><button className="outline-button empty-create" onClick={() => { setSearchText(''); searchInput.current?.focus(); }}>{t("清空搜索")}</button></> : snapshot.projects.length && preferences.filter !== 'all' ? <button className="outline-button empty-create" disabled={locked} onClick={() => void update({ filter: 'all' })}>{t("查看全部")}</button> : <button className="outline-button empty-create" disabled={!native} onClick={openCapture}>{t("新建任务")}</button>}{!native && <p className="preview-note">{t("浏览器布局预览 · 请启动桌面版连接本地看板")}</p>}</div>}
       </div>
-      <footer><button className="footer-create" disabled={!native} title="新建任务（Ctrl+Alt+N；窗口内 Ctrl+N）" onClick={openCapture}>＋ 新建</button>{!native ? <span title="浏览器预览不连接本地看板。">布局预览</span> : <button className={`footer-pause ${trackingPaused ? 'is-paused' : ''}`} aria-pressed={trackingPaused} disabled={pauseBusy || !pauseReady} title={trackingPaused ? '下个正常里程碑或新任务恢复尝试，不回补暂停期间' : '暂停后看板工具停止读写，Agent 照常工作'} onClick={() => void togglePause()}>{!pauseReady ? '记录状态未读取' : trackingPaused ? '继续记录' : '暂停记录'}</button>}<button className="footer-settings" onClick={() => setSettingsOpen(true)}>设置</button></footer>
+      <footer><button className="footer-create" disabled={!native} title={t("新建任务（Ctrl+Alt+N；窗口内 Ctrl+N）")} onClick={openCapture}>{t("＋ 新建")}</button>{!native ? <span title={t("浏览器预览不连接本地看板。")}>{t("布局预览")}</span> : <button className={`footer-pause ${trackingPaused ? 'is-paused' : ''}`} aria-pressed={trackingPaused} disabled={pauseBusy || !pauseReady} title={trackingPaused ? t("下个正常里程碑或新任务恢复尝试，不回补暂停期间") : t("暂停后看板工具停止读写，Agent 照常工作")} onClick={() => void togglePause()}>{!pauseReady ? t("记录状态未读取") : trackingPaused ? t("继续记录") : t("暂停记录")}</button>}<button className="footer-settings" onClick={() => setSettingsOpen(true)}>{t("设置")}</button></footer>
     </>}
-    {preferences.compact && (error || pauseError) && <span className="compact-error" title={[error, pauseError].filter(Boolean).join('；')} role="alert">!</span>}
+    {preferences.compact && (error || pauseError) && <span className="compact-error" title={[error, pauseError].filter(Boolean).join(t("；"))} role="alert">!</span>}
+    {projectMenu && menuProject && !preferences.compact && <ProjectMenu key={`${projectMenu.id}:${projectMenu.x}:${projectMenu.y}`} project={menuProject} x={projectMenu.x} y={projectMenu.y} onArchive={() => void archiveWholeProject(menuProject.id)} onClose={closeProjectMenu} />}
     {menu && menuTask && !preferences.compact && <TaskMenu key={`${menu.id}:${menu.x}:${menu.y}`} task={menuTask} x={menu.x} y={menu.y} onAct={action => void menuAction(menuTask, action)} onClose={closeMenu} />}
     {settingsOpen && <Settings preferences={preferences} busy={busy} disabled={locked} saveError={error} update={patch => void update(patch)} onShortcutChanged={() => void reloadPreferences().catch(e => setError(String(e)))} onClose={() => setSettingsOpen(false)} />}
     {captureOpen && captureDraft && <CapturePanel draft={captureDraft} projects={snapshot.projects} onChange={setCaptureDraft} onCreated={onCreated} onClose={() => setCaptureOpen(false)} />}

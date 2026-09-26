@@ -31,6 +31,8 @@ pub(crate) struct Preferences {
     pub auto_download_updates: bool,
     /// Project order after pinned ones: "recent" activity or "name".
     pub project_sort: String,
+    /// Interface language: "auto" follows Windows, or "zh" / "en".
+    pub language: String,
 }
 
 impl Default for Preferences {
@@ -56,6 +58,7 @@ impl Default for Preferences {
             auto_check_updates: true,
             auto_download_updates: false,
             project_sort: "recent".into(),
+            language: "auto".into(),
         }
     }
 }
@@ -74,6 +77,15 @@ impl Preferences {
         (width, height)
     }
 
+    /// Native text (tray, notifications) follows the same choice as the board.
+    pub fn english(&self) -> bool {
+        match self.language.as_str() {
+            "en" => true,
+            "zh" => false,
+            _ => !windows_is_chinese(),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if !["light", "dark"].contains(&self.theme.as_str())
             || ![
@@ -87,6 +99,7 @@ impl Preferences {
             ]
             .contains(&self.filter.as_str())
             || !["recent", "name"].contains(&self.project_sort.as_str())
+            || !["auto", "zh", "en"].contains(&self.language.as_str())
             || ![0, 1, 4, 8, 24, 48, 168].contains(&self.stale_after_hours)
             || ![0, 1, 3, 7, 30].contains(&self.auto_archive_days)
             || !(80..=130).contains(&self.font_scale)
@@ -100,6 +113,17 @@ impl Preferences {
         }
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn windows_is_chinese() -> bool {
+    // Primary language id 0x04 covers every Chinese variant.
+    unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() & 0x3ff == 0x04 }
+}
+
+#[cfg(not(windows))]
+fn windows_is_chinese() -> bool {
+    true
 }
 
 #[cfg(test)]
