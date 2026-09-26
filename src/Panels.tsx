@@ -15,9 +15,15 @@ export function Panel({ title, children, onClose, initialFocus, busy = false }: 
     initialFocus?.current?.focus();
     return () => node?.close();
   }, [initialFocus]);
-  function close() { if (!busy) { dialog.current?.close(); onClose(); } }
+  function close(pointer = false) {
+    if (busy) return;
+    dialog.current?.close();
+    // Closing restores focus to the opener; after a mouse click that would leave a stray focus ring.
+    if (pointer && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    onClose();
+  }
   return <dialog ref={dialog} className="panel" aria-label={title} onCancel={event => { event.preventDefault(); close(); }}>
-    <div className="panel-heading"><h2>{title}</h2><button className="text-button" autoFocus={!initialFocus} disabled={busy} onClick={close}>返回看板</button></div>
+    <div className="panel-heading"><h2>{title}</h2><button className="text-button" autoFocus={!initialFocus} disabled={busy} title="返回看板（Esc）" onClick={event => close(event.detail > 0)}>返回</button></div>
     {children}
   </dialog>;
 }
@@ -147,11 +153,11 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
           {desktop?.shortcut_error && <p className="panel-error">{desktop.shortcut_error}</p>}
         </section>
         <section className="settings-section"><h3>提醒</h3>
-          <label className="setting-row"><span>需要我处理时通知<small>受阻、需要补充或等你验收</small></span><input type="checkbox" checked={preferences.notify} disabled={disabled} onChange={event => update({ notify: event.target.checked })} /></label>
+          <label className="setting-row"><span>需要我处理时通知<small>受阻或需要你补充</small></span><input type="checkbox" checked={preferences.notify} disabled={disabled} onChange={event => update({ notify: event.target.checked })} /></label>
           <label className="setting-row"><span>多久未更新时提示</span><select aria-label="久未更新阈值" value={preferences.stale_after_hours} disabled={disabled} onChange={event => update({ stale_after_hours: Number(event.target.value) })}>{[0, 1, 4, 8, 24, 48, 168].map(hours => <option key={hours} value={hours}>{hours ? hours === 168 ? '7 天' : `${hours} 小时` : '关闭'}</option>)}</select></label>
         </section>
         <section className="settings-section"><h3>整理</h3>
-          <label className="setting-row"><span>已验收任务自动归档</span><select aria-label="自动归档" value={preferences.auto_archive_days} disabled={disabled} onChange={event => update({ auto_archive_days: Number(event.target.value) })}>{[0, 1, 3, 7, 30].map(days => <option key={days} value={days}>{days ? `${days} 天后` : '关闭'}</option>)}</select></label>
+          <label className="setting-row"><span>已完成任务自动归档</span><select aria-label="自动归档" value={preferences.auto_archive_days} disabled={disabled} onChange={event => update({ auto_archive_days: Number(event.target.value) })}>{[0, 1, 3, 7, 30].map(days => <option key={days} value={days}>{days ? `${days} 天后` : '关闭'}</option>)}</select></label>
           <div className="setting-row"><span>归档任务</span><button ref={archiveEntry} className="text-button" disabled={!native || backingUp} onClick={() => setArchiveOpen(true)}>归档中心</button></div>
           <div className="setting-row"><span>数据</span><span className="row-actions"><button className="text-button" disabled={!native} onClick={() => reveal('database')}>打开目录</button><button className="text-button" disabled={!native || backingUp} onClick={() => void runBackup()}>{backingUp ? '正在备份…' : '立即备份'}</button></span></div>
           {backup && <p role="status" className={backup.ok ? 'connection-ok' : 'panel-error'}>{backup.text}</p>}
@@ -185,8 +191,8 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
       </>}
       {/* The HarmonyOS Sans license asks for a visible notice and its full text in every copy. */}
       <div className="settings-footer">
-        <p className="hint version">AgentKanban{info ? ` ${info.app_version}` : ''} · 中文字体使用 HarmonyOS Sans</p>
-        <details className="font-license"><summary>字体许可</summary><p className="hint">Manrope 与 Geist Mono 采用 SIL Open Font License。HarmonyOS Sans 按以下协议使用，字体文件未作任何修改。</p><pre className="guidance" tabIndex={0}>{harmonyLicense.trim()}</pre></details>
+        <p className="hint version">AgentKanban{info ? ` ${info.app_version}` : ''}</p>
+        <details className="font-license"><summary>字体许可</summary><p className="hint">中文字体使用 HarmonyOS Sans。Manrope 与 Geist Mono 采用 SIL Open Font License。HarmonyOS Sans 按以下协议使用，字体文件未作任何修改。</p><pre className="guidance" tabIndex={0}>{harmonyLicense.trim()}</pre></details>
       </div>
     </div>
   </Panel>;

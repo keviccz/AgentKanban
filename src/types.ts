@@ -17,9 +17,9 @@ export interface TaskReport { reported_at: string; payload: Record<string, unkno
 export interface TaskReceipt { id: number; status: Status; updated_at: string }
 export interface CaptureInput { project_path: string; task_key: string; title: string; request: string }
 export interface ArchivedTask extends Task { project_name: string; project_path: string }
-export interface ArchiveQuery { query?: string; limit?: number; offset?: number }
+export interface ArchiveQuery { query?: string; project_id?: number; limit?: number; offset?: number }
 export interface ArchivePage { items: ArchivedTask[]; next_offset: number | null }
-export interface Project { id: number; name: string; path: string; tasks: Task[] }
+export interface Project { id: number; name: string; path: string; tasks: Task[]; archived_count: number }
 export const isTutorialTask = (project: Pick<Project, 'name'>, task: Pick<Task, 'agent' | 'task_key'>) => project.name === '新手教程'
   && task.agent === '教学示例'
   && (task.task_key === 'tutorial:follow-progress' || task.task_key === 'tutorial:review-delivery');

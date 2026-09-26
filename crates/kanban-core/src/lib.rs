@@ -177,6 +177,9 @@ pub struct ProjectBoard {
     pub name: String,
     pub path: String,
     pub tasks: Vec<Task>,
+    /// Archived tasks of this project; the GUI loads them on demand.
+    #[serde(default)]
+    pub archived_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -617,7 +620,9 @@ impl Database {
         let mut projects = Vec::new();
         {
             let mut statement = tx.prepare(
-                "SELECT id,name,path FROM projects p
+                "SELECT id,name,path,
+                   (SELECT COUNT(*) FROM tasks a WHERE a.project_id=p.id AND a.archived=1)
+                 FROM projects p
                  WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.archived=0)
                  ORDER BY name COLLATE NOCASE,id",
             )?;
@@ -627,6 +632,7 @@ impl Database {
                     name: row.get(1)?,
                     path: row.get(2)?,
                     tasks: Vec::new(),
+                    archived_count: row.get(3)?,
                 })
             })?;
             for row in rows {
@@ -1181,8 +1187,9 @@ impl Database {
         self.set_setting(TRACKING_PAUSED, if paused { "1" } else { "0" })
     }
 
-    /// Archives only human-accepted work left untouched for `older_than`.
-    /// Legacy and pending reviews stay visible. This is not Agent activity.
+    /// Archives finished work left untouched for `older_than`: accepted tasks and
+    /// done tasks the user never reviewed. Legacy done tasks stay visible. This is
+    /// not Agent activity.
     pub fn archive_finished(&self, older_than: Duration) -> Result<usize> {
         let age = chrono::Duration::from_std(older_than)
             .map_err(|_| Error::InvalidInput("archive age is too large".into()))?;
@@ -1191,8 +1198,29 @@ impl Database {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let archived = tx.execute(
             "UPDATE tasks SET archived=1,updated_at=?1
-             WHERE archived=0 AND status='done' AND review_status='accepted' AND updated_at<?2",
+             WHERE archived=0 AND status='done' AND review_status IN ('accepted','pending') AND updated_at<?2",
             params![changed_at(None), cutoff],
+        )?;
+        if archived > 0 {
+            tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
+        }
+        tx.commit()?;
+        Ok(archived)
+    }
+
+    /// Keeps at most `keep` finished tasks (accepted or unreviewed) on the board per
+    /// project; older ones move to the archive. Legacy done tasks are left alone.
+    pub fn archive_overflow(&self, keep: u32) -> Result<usize> {
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let archived = tx.execute(
+            "UPDATE tasks SET archived=1,updated_at=?1 WHERE id IN (
+               SELECT id FROM (
+                 SELECT id,ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY updated_at DESC,id DESC) AS rank
+                 FROM tasks
+                 WHERE archived=0 AND status='done' AND review_status IN ('accepted','pending')
+               ) WHERE rank>?2)",
+            params![changed_at(None), keep],
         )?;
         if archived > 0 {
             tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;

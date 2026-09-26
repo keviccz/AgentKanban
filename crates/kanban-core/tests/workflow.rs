@@ -720,7 +720,7 @@ fn v04_gui_archive_is_versioned_and_not_agent_activity() {
 }
 
 #[test]
-fn auto_archive_only_hides_old_accepted_work_and_backups_are_complete_copies() {
+fn auto_archive_hides_old_finished_work_and_backups_are_complete_copies() {
     let fixture = Fixture::new();
     let accepted = fixture
         .db
@@ -753,12 +753,34 @@ fn auto_archive_only_hides_old_accepted_work_and_backups_are_complete_copies() {
             .db
             .archive_finished(std::time::Duration::ZERO)
             .unwrap(),
-        1
+        2
     );
     assert_eq!(fixture.db.revision().unwrap(), revision + 1);
     assert!(fixture.task("accepted").archived);
-    assert!(!fixture.task("awaiting-review").archived);
+    // Done means finished; an unreviewed delivery is cleaned up the same way.
+    assert!(fixture.task("awaiting-review").archived);
     assert!(!fixture.task("working").archived);
+
+    // Beyond five finished tasks in a project, the oldest move to the archive.
+    for index in 0..7 {
+        fixture
+            .db
+            .upsert(fixture.upsert(&format!("finished-{index}"), Status::Done))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    fixture
+        .db
+        .upsert(fixture.upsert("still-working", Status::InProgress))
+        .unwrap();
+    let revision = fixture.db.revision().unwrap();
+    assert_eq!(fixture.db.archive_overflow(5).unwrap(), 2);
+    assert_eq!(fixture.db.revision().unwrap(), revision + 1);
+    assert!(fixture.task("finished-0").archived && fixture.task("finished-1").archived);
+    assert!((2..7).all(|index| !fixture.task(&format!("finished-{index}")).archived));
+    assert!(!fixture.task("still-working").archived);
+    assert_eq!(fixture.db.archive_overflow(5).unwrap(), 0);
+    assert_eq!(fixture.db.revision().unwrap(), revision + 1);
 
     let target = fixture.root.path().join("backup.sqlite3");
     fixture.db.backup_to(&target).unwrap();
@@ -775,7 +797,7 @@ fn auto_archive_only_hides_old_accepted_work_and_backups_are_complete_copies() {
         .into_iter()
         .map(|item| item.task.task_key)
         .collect();
-    assert_eq!(keys.len(), 3);
+    assert_eq!(keys.len(), 11);
 }
 
 #[test]

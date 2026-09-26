@@ -15,6 +15,13 @@ pub struct ArchiveQuery {
         skip_serializing_if = "Option::is_none"
     )]
     pub query: Option<String>,
+    /// Limit to one project, for the board's per-project archive group.
+    #[serde(
+        default,
+        deserialize_with = "optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_id: Option<i64>,
     #[serde(default = "default_limit")]
     pub limit: u32,
     #[serde(default)]
@@ -25,6 +32,7 @@ impl Default for ArchiveQuery {
     fn default() -> Self {
         Self {
             query: None,
+            project_id: None,
             limit: default_limit(),
             offset: 0,
         }
@@ -59,7 +67,7 @@ impl Database {
         let mut statement = conn.prepare(
             "SELECT t.*,p.name AS project_name,p.path AS project_path
              FROM tasks t JOIN projects p ON t.project_id=p.id
-             WHERE t.archived=1
+             WHERE t.archived=1 AND (?4 IS NULL OR t.project_id=?4)
                AND (?1 IS NULL OR t.title LIKE ?1 ESCAPE '\\'
                     OR p.name LIKE ?1 ESCAPE '\\' OR p.path LIKE ?1 ESCAPE '\\'
                     OR t.task_key LIKE ?1 ESCAPE '\\' OR t.goal LIKE ?1 ESCAPE '\\'
@@ -69,7 +77,7 @@ impl Database {
              LIMIT ?2 OFFSET ?3",
         )?;
         let mut items = statement
-            .query_map(params![query, input.limit + 1, input.offset], |row| {
+            .query_map(params![query, input.limit + 1, input.offset, input.project_id], |row| {
                 Ok(ListedTask {
                     task: read_task(row)?,
                     project_name: row.get("project_name")?,

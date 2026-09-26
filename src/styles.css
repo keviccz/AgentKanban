@@ -65,7 +65,7 @@ time { white-space: nowrap; flex-shrink: 0; }
 .completed { border-top: 1px solid var(--line); }
 .completed-toggle { width: 100%; padding: 8px 0; color: var(--muted); }
 .completed-toggle span { font-size: 11px; }
-.task-done:not(.task-review) :is(.task-title, .status, .step-count, .review-badge, .input-signal) { color: var(--muted); }
+.task-done :is(.task-title, .status, .step-count, .review-badge, .input-signal) { color: var(--muted); }
 .concise .project { padding-top: 5px; }
 .concise .project-heading { padding: 5px 0; }
 .task-concise .task-open { height: 34px; padding: 6px 2px 6px 7px; }
@@ -169,7 +169,6 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
 .review-badge.withdrawn { color: var(--amber); }
 .step-count { color: var(--teal); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .agent-name { color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 160px; }
-.task-review .task-title { color: var(--text); }
 .agent-attribution { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .workflow-section { border-top: 1px solid var(--line); padding: 14px 0; margin-top: 8px; }
 .workflow-section h4 { font-size: 12px; font-weight: 600; margin: 0 0 8px; }
@@ -302,3 +301,20 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
   .filter-count { margin-left: 3px; }
   .project-focus { gap: 7px; }
 }
+
+.setting-row + .setting-row { margin-top: 8px; }
+.github-button { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; padding: 7px 12px; border-radius: 5px; font-size: 12px; font-weight: 600; color: #fff; background: #24292f; }
+.github-button svg { width: 15px; height: 15px; flex-shrink: 0; }
+.github-button:hover { background: #32383f; }
+:root[data-theme="dark"] .github-button { background: #f0f3f6; color: #24292f; }
+:root[data-theme="dark"] .github-button:hover { background: #fff; }
+
+.task-menu { position: fixed; z-index: 20; min-width: 132px; padding: 4px; display: grid; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 6px 22px #0002; }
+.task-menu button { text-align: left; font-size: 12px; line-height: 20px; padding: 5px 10px; border-radius: 4px; }
+.task-menu button:hover:not(:disabled), .task-menu button:focus-visible { background: var(--hover); }
+.archived-list { list-style: none; margin: 0 0 6px; padding: 0; }
+.archived-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; gap: 10px; padding: 6px 2px 6px 7px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.archived-list li:last-child { border-bottom: 0; }
+.archived-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.archived-state { font-size: 10px; white-space: nowrap; }
+.archived-note { font-size: 11px; color: var(--muted); margin: 4px 7px 8px; }

@@ -1,6 +1,6 @@
 //! Background duties of the running board, whether or not its window is visible:
 //! a Windows notification when a task starts needing the user, and archiving
-//! of old accepted work.
+//! of old finished work.
 
 use crate::AppState;
 use kanban_core::{BoardSnapshot, Status};
@@ -12,6 +12,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const POLL: Duration = Duration::from_secs(2);
 const ARCHIVE_EVERY: Duration = Duration::from_secs(3600);
+/// Finished tasks kept on the board per project while automatic archiving is on.
+const KEEP_FINISHED: u32 = 5;
 /// More new items than this in one change become a single summary.
 const SEPARATE_LIMIT: usize = 3;
 
@@ -19,7 +21,6 @@ const SEPARATE_LIMIT: usize = 3;
 enum Need {
     Blocked,
     Input,
-    Review,
 }
 
 impl Need {
@@ -27,7 +28,6 @@ impl Need {
         match self {
             Need::Blocked => "受阻",
             Need::Input => "需要你补充",
-            Need::Review => "等你验收",
         }
     }
 }
@@ -44,9 +44,7 @@ fn needs(board: &BoardSnapshot) -> HashMap<i64, Alert> {
     for project in &board.projects {
         for task in &project.tasks {
             let need = match task.status {
-                Status::Done if task.review_status == kanban_core::ReviewStatus::Pending => {
-                    Need::Review
-                }
+                // Finished work never interrupts; reviewing it is optional.
                 Status::Done => continue,
                 Status::Blocked => Need::Blocked,
                 _ if !task.needs_input.is_empty() => Need::Input,
@@ -92,6 +90,19 @@ pub(crate) fn spawn(app: AppHandle) {
             }
             if let Ok(current) = state.db.revision() {
                 if revision != Some(current) {
+                    if preferences.auto_archive_days > 0 {
+                        match state.db.archive_overflow(KEEP_FINISHED) {
+                            // The archive bumped the revision; read the board on the next pass.
+                            Ok(archived) if archived > 0 => {
+                                std::thread::sleep(POLL);
+                                continue;
+                            }
+                            Ok(_) => {}
+                            Err(err) => {
+                                let _ = app.emit("app-error", format!("自动归档失败：{err}"));
+                            }
+                        }
+                    }
                     if let Ok(board) = state.db.board() {
                         revision = Some(current);
                         let alerts = needs(&board);

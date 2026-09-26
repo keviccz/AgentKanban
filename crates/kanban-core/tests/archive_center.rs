@@ -111,6 +111,21 @@ fn archived_pages_include_all_statuses_and_have_a_stable_tie_breaker() {
         .unwrap();
     assert_eq!(second.items.len(), 3);
     assert_eq!(second.next_offset, None);
+    let project_id = first.items[0].task.project_id;
+    let scoped = |project_id| {
+        fixture
+            .db
+            .list_archived(ArchiveQuery {
+                project_id: Some(project_id),
+                limit: 100,
+                ..Default::default()
+            })
+            .unwrap()
+            .items
+            .len()
+    };
+    assert_eq!(scoped(project_id), 23);
+    assert_eq!(scoped(project_id + 1_000), 0);
     ids.reverse();
     assert_eq!(
         first

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { checkUpdates, downloadUpdate, installUpdate, native, onUpdateStatus, readUpdateStatus } from './bridge';
+import { checkUpdates, downloadUpdate, installUpdate, native, onUpdateStatus, openExternalLink, readUpdateStatus } from './bridge';
 import type { Preferences, UpdateStatus } from './types';
 
 const phaseLabels: Record<UpdateStatus['phase'], string> = {
@@ -7,6 +7,9 @@ const phaseLabels: Record<UpdateStatus['phase'], string> = {
   downloading: '正在后台下载…', ready: '更新已下载，可以安装',
   installing: '正在启动安装程序…', blocked: '更新已下载，安装暂不可用', error: '更新未完成',
 };
+
+const RELEASES_URL = 'https://github.com/keviccz/AgentKanban/releases';
+const GITHUB_MARK = 'M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3';
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${Math.max(0, Math.floor(bytes))} B`;
@@ -106,6 +109,7 @@ export function Updates({ preferences, disabled, currentVersion, update, onLater
           {canDownload && <button className="primary-button" disabled={reading || active} onClick={() => void run('download')}>{phase === 'error' ? '重试下载' : '后台下载'}</button>}
           {canInstall && <button className="primary-button" disabled={reading || active} onClick={() => void run('install')}>{phase === 'blocked' ? '重试安装' : '安装更新'}</button>}
           {phase === 'blocked' && <button className="text-button" onClick={onLater}>稍后</button>}
+          <button className="github-button" title={RELEASES_URL} onClick={() => void openExternalLink(RELEASES_URL).catch(e => setActionError(String(e)))}><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d={GITHUB_MARK} /></svg>GitHub</button>
         </div>
         {status?.version && <section className="update-release"><h4>最新版本 {status.version}</h4><details open><summary>更新说明</summary><p>{status.notes || '此版本未提供更新说明。'}</p></details></section>}
       </>}
