@@ -33,6 +33,7 @@ export interface Preferences {
   notify: boolean; auto_archive_days: number; start_hidden: boolean;
   font_scale: number; opacity: number;
   auto_check_updates: boolean; auto_download_updates: boolean;
+  project_sort: 'recent' | 'name';
 }
 export const defaults: Preferences = {
   theme: 'light', always_on_top: true, compact: false, concise: false, filter: 'all',
@@ -41,6 +42,7 @@ export const defaults: Preferences = {
   notify: true, auto_archive_days: 7, start_hidden: true,
   font_scale: 100, opacity: 100,
   auto_check_updates: true, auto_download_updates: false,
+  project_sort: 'recent',
 };
 export interface IntegrationInfo {
   app_version: string; mcp_path: string; mcp_exists: boolean; database_path: string;

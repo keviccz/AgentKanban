@@ -8,7 +8,7 @@ import { CapturePanel, TaskDetails, type FeedbackDraft } from './Workflows';
 const filterLabels: Record<Filter, string> = { all: '全部', attention: '等你处理', in_progress: '进行中', recent: '最近变更' };
 const SLOGAN = 'Agent 推进，你来验收。';
 
-type IconName = 'logo' | 'pin' | 'sun' | 'moon' | 'list' | 'search' | 'minus' | 'close' | 'chevron' | 'branch' | 'expand';
+type IconName = 'logo' | 'pin' | 'sun' | 'moon' | 'list' | 'search' | 'refresh' | 'minus' | 'close' | 'chevron' | 'branch' | 'expand';
 function Icon({ name, className = '' }: { name: IconName; className?: string }) {
   const paths: Record<Exclude<IconName, 'logo'>, React.ReactNode> = {
     pin: <g transform="rotate(35 12 12)"><path d="M9 3h6m-5 0v6l-3 4v2h10v-2l-3-4V3M12 15v6" /></g>,
@@ -16,6 +16,7 @@ function Icon({ name, className = '' }: { name: IconName; className?: string }) 
     moon: <path d="M20.5 14A8.5 8.5 0 0 1 10 3.5 8.5 8.5 0 1 0 20.5 14Z" />,
     list: <><path d="M8 6h12M8 12h12M8 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" strokeWidth="3" /></>,
     search: <><circle cx="10" cy="10" r="6" /><path d="m15 15 6 6" /></>,
+    refresh: <><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" /><path d="M4 3.5V8h4.5" /><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16" /><path d="M20 20.5V16h-4.5" /></>,
     minus: <path d="M5 12h14" />,
     close: <path d="m6 6 12 12M18 6 6 18" />,
     chevron: <path d="m9 5 7 7-7 7" />,
@@ -167,6 +168,7 @@ export function App() {
   const [pauseError, setPauseError] = useState('');
   const [pauseBusy, setPauseBusy] = useState(false);
   const [menu, setMenu] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [reloading, setReloading] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchText, setSearchText] = useState('');
   const searchInput = useRef<HTMLInputElement>(null);
@@ -319,6 +321,14 @@ export function App() {
     await Promise.all([refresh(true), reloadPause()]);
   }
 
+  async function manualRefresh() {
+    if (reloading) return;
+    setReloading(true); setNow(Date.now());
+    // Keep the spin visible long enough to register as feedback.
+    try { await Promise.all([retryRead(), new Promise(resolve => setTimeout(resolve, 450))]); }
+    finally { setReloading(false); }
+  }
+
   async function togglePause() {
     if (pauseBusy || !pauseReady) return;
     setPauseBusy(true);
@@ -376,6 +386,8 @@ export function App() {
     return searching ? scoped.map(project => ({ ...project, tasks: project.tasks.filter(task => matchesSearch(project, task, searchQuery)) })) : scoped;
   }, [snapshot.projects, searching, searchQuery, focusActive, focusedProject]);
   const allTasks = useMemo(() => projectsInScope.flatMap(project => project.tasks), [projectsInScope]);
+  // Recent order follows the project's newest task, whatever the status filter shows.
+  const latestChange = useMemo(() => new Map(projectsInScope.map(project => [project.id, Math.max(0, ...project.tasks.map(changedAt))])), [projectsInScope]);
   const ongoing = allTasks.filter(task => task.status === 'in_progress').length;
   const attention = allTasks.filter(needsAttention).length;
   const filterCounts: Record<Filter, number | null> = { all: null, attention, in_progress: ongoing, recent: null };
@@ -385,7 +397,10 @@ export function App() {
     return { ...project, tasks };
   }).filter(project => project.tasks.length > 0).sort((a, b) => recent
     ? changedAt(b.tasks[0]) - changedAt(a.tasks[0]) || a.id - b.id
-    : Number(preferences.pinned_projects.includes(b.id)) - Number(preferences.pinned_projects.includes(a.id))), [projectsInScope, preferences.filter, preferences.pinned_projects, recent]);
+    : Number(preferences.pinned_projects.includes(b.id)) - Number(preferences.pinned_projects.includes(a.id))
+      || (preferences.project_sort === 'name'
+        ? a.name.localeCompare(b.name, 'zh-CN', { sensitivity: 'base', numeric: true }) || a.id - b.id
+        : latestChange.get(b.id)! - latestChange.get(a.id)! || a.id - b.id)), [projectsInScope, preferences.filter, preferences.pinned_projects, preferences.project_sort, recent, latestChange]);
   const matchingCount = visibleProjects.reduce((count, project) => count + project.tasks.length, 0);
   const selectedProject = snapshot.projects.find(project => project.tasks.some(task => task.id === selectedTaskId));
   const selectedTask = selectedProject?.tasks.find(task => task.id === selectedTaskId);
@@ -406,16 +421,16 @@ export function App() {
       <div className="window-actions">{controls}</div>
     </header>
     {!preferences.compact && <>
-      {(snapshot.projects.length > 0 || focusActive || searchOpen) && <div className="project-focus"><select aria-label="聚焦项目" value={searching ? '' : preferences.focused_project ?? ''} title={searching ? '搜索期间查找全部项目，清空搜索后恢复原聚焦' : undefined} disabled={locked || searching} onChange={event => void update({ focused_project: event.target.value ? Number(event.target.value) : null })}><option value="">{searching ? '搜索全部项目' : '全部项目'} · {snapshot.projects.length}</option>{focusActive && !focusedProject && <option value={preferences.focused_project!}>聚焦的项目暂无任务</option>}{snapshot.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select>{focusActive && !searching && <button className="text-button" disabled={locked} onClick={() => void update({ focused_project: null })}>查看全部</button>}<button ref={searchButton} className={`icon-button search-toggle ${searchOpen ? 'is-active' : ''}`} aria-label={searchOpen ? '收起查找' : '查找任务'} aria-expanded={searchOpen} aria-controls="board-search" title={searchOpen ? '收起查找并清空搜索' : '查找任务（Ctrl+F）'} disabled={!ready} onClick={() => searchOpen ? closeSearch() : revealSearch()}><Icon name="search" /></button></div>}
-      {searchOpen && <div id="board-search" className="board-search"><div className="board-search-row"><input ref={searchInput} type="search" maxLength={160} aria-label="搜索全部项目" placeholder="搜索任务或项目" value={searchText} onChange={event => setSearchText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSearch(); } }} /><button className="text-button" disabled={!searchText} onClick={() => { setSearchText(''); searchInput.current?.focus(); }}>清空搜索</button></div><p className="search-scope">{searching ? `搜索全部项目（不含归档） · ${matchingCount} 项匹配` : '输入后搜索全部项目；仍按当前状态筛选。'}</p></div>}
+      {(snapshot.projects.length > 0 || focusActive || searchOpen) && <div className="project-focus"><select aria-label="聚焦项目" value={searching ? '' : preferences.focused_project ?? ''} title={searching ? '搜索期间查找全部项目，清空搜索后恢复原聚焦' : undefined} disabled={locked || searching} onChange={event => void update({ focused_project: event.target.value ? Number(event.target.value) : null })}><option value="">{searching ? '搜索全部项目' : '全部项目'} · {snapshot.projects.length}</option>{focusActive && !focusedProject && <option value={preferences.focused_project!}>聚焦的项目暂无任务</option>}{snapshot.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select>{focusActive && !searching && <button className="text-button" disabled={locked} onClick={() => void update({ focused_project: null })}>查看全部</button>}<button ref={searchButton} className={`icon-button search-toggle ${searchOpen ? 'is-active' : ''}`} aria-label={searchOpen ? '收起查找' : '查找任务'} aria-expanded={searchOpen} aria-controls="board-search" title={searchOpen ? '收起查找并清空搜索' : '查找任务（Ctrl+F）'} disabled={!ready} onClick={() => searchOpen ? closeSearch() : revealSearch()}><Icon name="search" /></button><button className={`icon-button refresh-button ${reloading ? 'is-spinning' : ''}`} aria-label="刷新看板" title="刷新任务状态" disabled={!ready || reloading} onClick={() => void manualRefresh()}><Icon name="refresh" /></button></div>}
+      {searchOpen && <div id="board-search" className="board-search"><div className="board-search-row"><input ref={searchInput} type="search" maxLength={160} aria-label="搜索全部项目" placeholder="搜索任务或项目" value={searchText} onChange={event => setSearchText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSearch(); } }} /><button className="text-button" disabled={!searchText} onClick={() => { setSearchText(''); searchInput.current?.focus(); }}>清空搜索</button></div>{searching && <p className="search-scope">搜索全部项目（不含归档） · {matchingCount} 项匹配</p>}</div>}
       <nav className="filters" aria-label="按状态筛选" title="等你处理：受阻或需要你补充。已完成的任务直接变灰，可右键一键验收。最近变更含 Agent 和用户操作，按任务最近变更时间排列。">{(['all', 'attention', 'in_progress', 'recent'] as Filter[]).map(filter => <button key={filter} disabled={locked} aria-pressed={preferences.filter === filter} className={preferences.filter === filter ? 'selected' : ''} onClick={() => void update({ filter })}>{filterLabels[filter]}{filterCounts[filter] !== null && <span className={`filter-count ${filter === 'attention' && attention > 0 ? 'blocked' : ''}`}>{filterCounts[filter]}</span>}</button>)}</nav>
-      {trackingPaused && <div className="paused-banner" role="status"><span>Agent 记录已暂停，Agent 照常工作。恢复后在下个正常里程碑或新任务恢复尝试，不回补暂停期间。</span><button disabled={pauseBusy} onClick={() => void togglePause()}>恢复</button></div>}
+      {trackingPaused && <div className="paused-banner" role="status" title="Agent 照常工作；恢复后在下个正常里程碑或新任务恢复记录，不回补暂停期间。"><span className="paused-dot" aria-hidden="true" /><span className="paused-text"><strong>记录已暂停</strong> · Agent 照常工作</span><button disabled={pauseBusy} onClick={() => void togglePause()}>恢复记录</button></div>}
       {(error || pauseError) && <div className="error" role="alert"><span title={[error, pauseError].filter(Boolean).join('；')}>{[error, pauseError].filter(Boolean).join('；')}</span><button onClick={() => void retryRead()}>重试</button></div>}
       <div className="board" aria-label="项目任务" aria-busy={!ready}>
         {recent && <p className="board-view-hint">按最近变更排序并临时展开，含 Agent 和用户操作；此视图不按置顶排序。</p>}
         {!ready ? <div className="empty"><p>正在读取看板…</p></div> : visibleProjects.length ? visibleProjects.map(project => <ProjectSection key={project.id} project={project} preferences={preferences} searching={searching} update={p => void update(p)} now={now} busy={locked} onOpen={setSelectedTaskId} onMenu={openMenu} onChanged={refreshAfterWrite} />) : <div className="empty"><Icon name="logo" /><h2>{searching ? '没有匹配的任务' : snapshot.projects.length ? `没有${preferences.filter === 'all' ? '' : filterLabels[preferences.filter]}的任务` : SLOGAN}</h2>{searching ? <><p>已搜索全部项目，当前状态筛选为“{filterLabels[preferences.filter]}”。</p><button className="outline-button empty-create" onClick={() => { setSearchText(''); searchInput.current?.focus(); }}>清空搜索</button></> : snapshot.projects.length && preferences.filter !== 'all' ? <button className="outline-button empty-create" disabled={locked} onClick={() => void update({ filter: 'all' })}>查看全部</button> : <button className="outline-button empty-create" disabled={!native} onClick={openCapture}>新建任务</button>}{!native && <p className="preview-note">浏览器布局预览 · 请启动桌面版连接本地看板</p>}</div>}
       </div>
-      <footer><button className="footer-create" disabled={!native} title="新建任务（Ctrl+Alt+N；窗口内 Ctrl+N）" onClick={openCapture}>＋ 新建</button>{!native ? <span title="浏览器预览不连接本地看板。">布局预览</span> : <button className={`footer-pause ${trackingPaused ? 'is-paused' : ''}`} aria-pressed={trackingPaused} disabled={pauseBusy || !pauseReady} title={trackingPaused ? '下个正常里程碑或新任务恢复尝试，不回补暂停期间' : '暂停后看板工具停止读写，Agent 照常工作'} onClick={() => void togglePause()}>{!pauseReady ? '记录状态未读取' : trackingPaused ? '记录已暂停 · 恢复' : '暂停记录'}</button>}<button className="footer-settings" onClick={() => setSettingsOpen(true)}>设置</button></footer>
+      <footer><button className="footer-create" disabled={!native} title="新建任务（Ctrl+Alt+N；窗口内 Ctrl+N）" onClick={openCapture}>＋ 新建</button>{!native ? <span title="浏览器预览不连接本地看板。">布局预览</span> : <button className={`footer-pause ${trackingPaused ? 'is-paused' : ''}`} aria-pressed={trackingPaused} disabled={pauseBusy || !pauseReady} title={trackingPaused ? '下个正常里程碑或新任务恢复尝试，不回补暂停期间' : '暂停后看板工具停止读写，Agent 照常工作'} onClick={() => void togglePause()}>{!pauseReady ? '记录状态未读取' : trackingPaused ? '继续记录' : '暂停记录'}</button>}<button className="footer-settings" onClick={() => setSettingsOpen(true)}>设置</button></footer>
     </>}
     {preferences.compact && (error || pauseError) && <span className="compact-error" title={[error, pauseError].filter(Boolean).join('；')} role="alert">!</span>}
     {menu && menuTask && !preferences.compact && <TaskMenu key={`${menu.id}:${menu.x}:${menu.y}`} task={menuTask} x={menu.x} y={menu.y} onAct={action => void menuAction(menuTask, action)} onClose={closeMenu} />}

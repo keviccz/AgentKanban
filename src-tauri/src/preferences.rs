@@ -29,6 +29,8 @@ pub(crate) struct Preferences {
     /// Checks run in the desktop process, never through Agent calls.
     pub auto_check_updates: bool,
     pub auto_download_updates: bool,
+    /// Project order after pinned ones: "recent" activity or "name".
+    pub project_sort: String,
 }
 
 impl Default for Preferences {
@@ -53,6 +55,7 @@ impl Default for Preferences {
             opacity: 100,
             auto_check_updates: true,
             auto_download_updates: false,
+            project_sort: "recent".into(),
         }
     }
 }
@@ -83,6 +86,7 @@ impl Preferences {
                 "recent",
             ]
             .contains(&self.filter.as_str())
+            || !["recent", "name"].contains(&self.project_sort.as_str())
             || ![0, 1, 4, 8, 24, 48, 168].contains(&self.stale_after_hours)
             || ![0, 1, 3, 7, 30].contains(&self.auto_archive_days)
             || !(80..=130).contains(&self.font_scale)
