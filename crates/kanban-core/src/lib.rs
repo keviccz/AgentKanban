@@ -1,7 +1,9 @@
 //! Shared local storage for the desktop app and independent MCP processes.
 
+mod archive_center;
 mod onboarding;
 mod project;
+mod sync_health;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
@@ -11,7 +13,9 @@ use std::{
     time::Duration,
 };
 
+pub use archive_center::ArchiveQuery;
 pub use project::{resolve_project, ProjectIdentity};
+pub use sync_health::{SyncEvent, SyncHealth, SyncOutcome, SyncTool, SyncTransport};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -986,8 +990,8 @@ impl Database {
         })
     }
 
-    /// Hide a task from the board by user request. Restoring stays an Agent tool
-    /// (task_archive archived=false) because the board does not list archived tasks.
+    /// Hide a task from the board by user request. The archive center restores
+    /// the same row through restore_by_id without reporting Agent activity.
     pub fn archive_by_id(&self, input: ArchiveById) -> Result<TaskReceipt> {
         validate_task_id(input.id)?;
         validate_text("expected_updated_at", &input.expected_updated_at, 1, 64)?;

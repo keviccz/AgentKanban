@@ -1,5 +1,5 @@
 use agentkanban_mcp::{serve, Server};
-use kanban_core::Database;
+use kanban_core::{Database, SyncHealth, SyncOutcome, SyncTool, SyncTransport};
 use serde_json::{json, Value};
 use std::io::Cursor;
 
@@ -15,6 +15,186 @@ fn initialize(version: &str) -> Value {
 
 fn request(id: i64, method: &str, params: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+}
+
+#[test]
+fn only_received_known_tool_calls_record_health_and_empty_reads_allow_onboarding() {
+    let (_root, db) = fixture();
+    let mut server = Server::new(db.clone());
+    server.handle(request(0, "tools/call", json!({"name":"task_list"})));
+    server.handle(initialize("2025-11-25"));
+    server.handle(request(2, "tools/list", json!({})));
+    server.handle(request(3, "ping", json!({})));
+    server.handle(request(4, "tools/call", json!({"name":"unknown"})));
+    server.handle(json!({"jsonrpc":"2.0","method":"tools/call","params":{"name":"task_list"}}));
+    assert_eq!(db.get_sync_health().unwrap(), SyncHealth::default());
+
+    let listed = server
+        .handle(request(
+            5,
+            "tools/call",
+            json!({"name":"task_list","arguments":{}}),
+        ))
+        .unwrap();
+    assert_eq!(
+        listed["result"]["structuredContent"],
+        json!({"items":[],"next_offset":null})
+    );
+    let health = db.get_sync_health().unwrap();
+    assert_eq!(health.last_call, health.last_success);
+    assert!(health.last_write.is_none());
+    let event = health.last_call.unwrap();
+    assert_eq!(event.transport, SyncTransport::Mcp);
+    assert_eq!(event.tool, SyncTool::TaskList);
+    assert_eq!(event.outcome, SyncOutcome::Ok);
+    assert_eq!(db.revision().unwrap(), 0);
+    assert!(db.initialize_tutorial().unwrap());
+}
+
+#[test]
+fn tool_errors_are_private_categories_and_preserve_last_successful_write() {
+    let (root, db) = fixture();
+    let mut server = Server::new(db.clone());
+    server.handle(initialize("2025-11-25"));
+    let args = json!({"project_path":root.path(),"task_key":"private-task-key","title":"private title","status":"todo","progress":"private request"});
+    let created = server
+        .handle(request(
+            2,
+            "tools/call",
+            json!({"name":"task_upsert","arguments":args}),
+        ))
+        .unwrap();
+    let receipt = &created["result"]["structuredContent"];
+    assert_eq!(receipt.as_object().unwrap().len(), 3);
+    let successful = db.get_sync_health().unwrap();
+
+    let mut invalid = args.clone();
+    invalid["status"] = json!("private-invalid-value");
+    let failed = server
+        .handle(request(
+            3,
+            "tools/call",
+            json!({"name":"task_upsert","arguments":invalid}),
+        ))
+        .unwrap();
+    assert_eq!(failed["result"]["isError"], true);
+    let health = db.get_sync_health().unwrap();
+    assert_eq!(health.last_write, successful.last_write);
+    assert_eq!(health.last_success, successful.last_success);
+    assert_eq!(
+        health.last_call.unwrap().error.as_deref(),
+        Some("Invalid tool arguments")
+    );
+    let raw = db.get_setting("sync_health").unwrap().unwrap();
+    assert!(!raw.contains("private"));
+    assert!(!raw.contains(root.path().to_str().unwrap()));
+
+    let mut conflict = args;
+    conflict["progress"] = json!("new content without expected token");
+    let failed = server
+        .handle(request(
+            4,
+            "tools/call",
+            json!({"name":"task_upsert","arguments":conflict}),
+        ))
+        .unwrap();
+    assert_eq!(failed["result"]["isError"], true);
+    assert_eq!(
+        db.get_sync_health()
+            .unwrap()
+            .last_call
+            .unwrap()
+            .error
+            .as_deref(),
+        Some("Version conflict; re-read the task")
+    );
+    assert_eq!(db.revision().unwrap(), 1);
+    assert_eq!(
+        db.reports(receipt["id"].as_i64().unwrap()).unwrap().len(),
+        1
+    );
+
+    db.set_tracking_paused(true).unwrap();
+    let paused = server
+        .handle(request(
+            5,
+            "tools/call",
+            json!({"name":"task_archive","arguments":{}}),
+        ))
+        .unwrap();
+    assert_eq!(paused["result"]["structuredContent"]["paused"], true);
+    let health = db.get_sync_health().unwrap();
+    assert!(health.paused);
+    assert_eq!(health.last_call.unwrap().outcome, SyncOutcome::Paused);
+    assert_eq!(health.last_write, successful.last_write);
+    assert_eq!(health.last_success, successful.last_success);
+}
+
+#[test]
+fn health_storage_failure_never_changes_tool_success_or_tool_failure() {
+    let (root, db) = fixture();
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reject_health BEFORE INSERT ON settings WHEN NEW.key='sync_health'
+         BEGIN SELECT RAISE(ABORT,'injected health failure'); END;",
+        )
+        .unwrap();
+    let mut server = Server::new(db.clone());
+    server.handle(initialize("2025-11-25"));
+    let args = json!({"project_path":root.path(),"task_key":"auto:health-failure","title":"Task","status":"todo","progress":"Original operation succeeds"});
+    let created = server
+        .handle(request(
+            2,
+            "tools/call",
+            json!({"name":"task_upsert","arguments":args}),
+        ))
+        .unwrap();
+    assert_eq!(created["result"]["isError"], false);
+    assert_eq!(
+        created["result"]["structuredContent"]
+            .as_object()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(db.revision().unwrap(), 1);
+    assert_eq!(db.get_sync_health().unwrap(), SyncHealth::default());
+    let failed = server
+        .handle(request(
+            3,
+            "tools/call",
+            json!({"name":"task_upsert","arguments":{}}),
+        ))
+        .unwrap();
+    assert_eq!(failed["result"]["isError"], true);
+    assert!(failed["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Invalid input"));
+    assert_eq!(db.revision().unwrap(), 1);
+}
+
+#[test]
+fn locked_health_write_does_not_block_a_successful_read_for_task_timeout() {
+    let (_root, db) = fixture();
+    let mut server = Server::new(db.clone());
+    server.handle(initialize("2025-11-25"));
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let started = std::time::Instant::now();
+    let response = server
+        .handle(request(
+            2,
+            "tools/call",
+            json!({"name":"task_list","arguments":{}}),
+        ))
+        .unwrap();
+    assert_eq!(response["result"]["isError"], false);
+    assert!(started.elapsed() < std::time::Duration::from_millis(600));
+    conn.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(db.get_sync_health().unwrap(), SyncHealth::default());
+    assert_eq!(db.revision().unwrap(), 0);
 }
 
 #[test]

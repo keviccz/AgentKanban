@@ -120,7 +120,12 @@ fn run(arguments: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
                 read_arguments(File::open(PathBuf::from(input))?)?
             };
             let db = kanban_core::Database::open_default()?;
-            let result = agentkanban_mcp::execute_tool(&db, &name, arguments)?;
+            let result = agentkanban_mcp::execute_tool_with_transport(
+                &db,
+                &name,
+                arguments,
+                kanban_core::SyncTransport::Cli,
+            )?;
             write_json(&result)?;
         }
     }

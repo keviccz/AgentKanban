@@ -1,4 +1,7 @@
-use kanban_core::{CaptureTask, Database, ReviewStatus, ReviewTask, Status};
+use kanban_core::{
+    CaptureTask, Database, ReviewStatus, ReviewTask, Status, SyncHealth, SyncOutcome, SyncTool,
+    SyncTransport,
+};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::{
@@ -136,6 +139,107 @@ fn cli_call(data_dir: &Path, name: &str, arguments: Value) -> (Output, Value) {
     );
     let result = cli_json(&output);
     (output, result)
+}
+
+#[test]
+fn process_health_tracks_mcp_cli_and_pause_without_inventing_disconnect_events() {
+    let root = tempfile::tempdir().unwrap();
+    let data_dir = root.path().join("sync-health");
+    let mut client = Client::launch(&data_dir);
+    let db = Database::open(data_dir.join("agentkanban.sqlite3")).unwrap();
+    assert_eq!(db.get_sync_health().unwrap(), SyncHealth::default());
+    let created = client.tool("task_upsert", args(root.path(), "auto:health", "todo"));
+    let first = db.get_sync_health().unwrap();
+    assert_eq!(
+        first.last_write.as_ref().unwrap().transport,
+        SyncTransport::Mcp
+    );
+    assert_eq!(
+        first.last_write.as_ref().unwrap().tool,
+        SyncTool::TaskUpsert
+    );
+    client.child.kill().unwrap();
+    client.child.wait().unwrap();
+    drop(client);
+    assert_eq!(db.get_sync_health().unwrap(), first);
+
+    let (output, listed) = cli_call(&data_dir, "task_list", json!({"task_key":"auto:health"}));
+    assert!(output.status.success(), "{listed}");
+    let read = db.get_sync_health().unwrap();
+    assert_eq!(
+        read.last_call.as_ref().unwrap().transport,
+        SyncTransport::Cli
+    );
+    assert_eq!(read.last_success, read.last_call);
+    assert_eq!(read.last_write, first.last_write);
+    let mut update = args(root.path(), "auto:health", "in_progress");
+    update["expected_updated_at"] = created["structuredContent"]["updated_at"].clone();
+    let (output, receipt) = cli_call(&data_dir, "task_upsert", update);
+    assert!(output.status.success(), "{receipt}");
+    assert_eq!(receipt.as_object().unwrap().len(), 3);
+    let wrote = db.get_sync_health().unwrap();
+    assert_eq!(
+        wrote.last_write.as_ref().unwrap().transport,
+        SyncTransport::Cli
+    );
+    assert_eq!(db.revision().unwrap(), 2);
+    assert_eq!(
+        db.reports(receipt["id"].as_i64().unwrap()).unwrap().len(),
+        2
+    );
+
+    db.set_tracking_paused(true).unwrap();
+    let (output, paused) = cli_call(&data_dir, "task_archive", json!({}));
+    assert!(output.status.success(), "{paused}");
+    assert_eq!(paused["paused"], true);
+    let health = db.get_sync_health().unwrap();
+    assert!(health.paused);
+    assert_eq!(
+        health.last_call.as_ref().unwrap().outcome,
+        SyncOutcome::Paused
+    );
+    assert_eq!(health.last_success, wrote.last_success);
+    assert_eq!(health.last_write, wrote.last_write);
+    assert_eq!(db.revision().unwrap(), 2);
+
+    let malformed = run_cli(
+        &data_dir,
+        &["--call", "task_list", "--input-file", "-"],
+        Some(b"not JSON"),
+    );
+    assert!(!malformed.status.success());
+    assert_eq!(db.get_sync_health().unwrap(), health);
+    let restarted = Client::launch(&data_dir);
+    assert_eq!(db.get_sync_health().unwrap(), health);
+    restarted.close();
+    assert_eq!(db.get_sync_health().unwrap(), health);
+}
+
+#[test]
+fn cli_health_failure_is_only_a_short_stderr_diagnostic() {
+    let root = tempfile::tempdir().unwrap();
+    let data_dir = root.path().join("health-unavailable");
+    let db = Database::open(data_dir.join("agentkanban.sqlite3")).unwrap();
+    Connection::open(db.path())
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reject_health BEFORE INSERT ON settings WHEN NEW.key='sync_health'
+         BEGIN SELECT RAISE(ABORT,'private storage diagnostic'); END;",
+        )
+        .unwrap();
+    let (output, receipt) = cli_call(
+        &data_dir,
+        "task_upsert",
+        args(root.path(), "auto:still-succeeds", "todo"),
+    );
+    assert!(output.status.success(), "{receipt}");
+    assert_eq!(receipt.as_object().unwrap().len(), 3);
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap().trim(),
+        "AgentKanban: sync health could not be recorded"
+    );
+    assert_eq!(db.revision().unwrap(), 1);
+    assert_eq!(db.get_sync_health().unwrap(), SyncHealth::default());
 }
 
 #[test]
@@ -403,6 +507,9 @@ fn two_processes_that_both_saw_no_task_cannot_silently_overwrite_a_creation() {
     let db = Database::open(data_dir.join("agentkanban.sqlite3")).unwrap();
     assert_eq!(db.revision().unwrap(), 1);
     assert_eq!(db.board().unwrap().projects[0].tasks.len(), 1);
+    let health = db.get_sync_health().unwrap();
+    assert_eq!(health.last_success, health.last_write);
+    assert_eq!(health.last_write.unwrap().outcome, SyncOutcome::Ok);
 }
 
 #[test]

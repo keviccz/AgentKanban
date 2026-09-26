@@ -1,14 +1,21 @@
 //! Small newline-delimited JSON-RPC implementation of the local MCP surface.
 
-use kanban_core::{ArchiveTask, Database, ListTasks, ListedTask, ReviewStatus, Status, StepStatus};
+use kanban_core::{
+    ArchiveTask, Database, ListTasks, ListedTask, ReviewStatus, Status, StepStatus, SyncOutcome,
+    SyncTool, SyncTransport,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::io::{self, BufRead, Write};
+use std::{
+    io::{self, BufRead, Write},
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 const PROTOCOL_VERSION: &str = "2025-11-25";
 const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
 pub const TOOL_NAMES: &[&str] = &["task_upsert", "task_list", "task_archive"];
+static SYNC_HEALTH_WARNING_PRINTED: AtomicBool = AtomicBool::new(false);
 // Some clients (e.g. Codex CLI 0.156) do not show server instructions to the
 // model, so the tracking rules live in the tool descriptions; this only adds the rest.
 const INSTRUCTIONS: &str = "AgentKanban tracks file-modifying work automatically; the task_list and task_upsert descriptions say when. On Conflict, re-read with task_key before retrying. Keep board bookkeeping out of replies unless it fails.";
@@ -251,6 +258,72 @@ impl std::error::Error for ToolCallError {}
 /// Shared by MCP and the one-shot local CLI. The transport cannot bypass pause,
 /// argument validation, optimistic concurrency, or the original report payload.
 pub fn execute_tool(
+    db: &Database,
+    name: &str,
+    arguments: Value,
+) -> std::result::Result<Value, ToolCallError> {
+    execute_tool_with_transport(db, name, arguments, SyncTransport::Mcp)
+}
+
+pub fn execute_tool_with_transport(
+    db: &Database,
+    name: &str,
+    arguments: Value,
+    transport: SyncTransport,
+) -> std::result::Result<Value, ToolCallError> {
+    let result = execute_tool_inner(db, name, arguments);
+    // Only a recognized, received tool call is an observation. Initialization,
+    // transport closure, malformed frames and unknown tools say no such thing.
+    if let Some(tool) = SyncTool::from_name(name) {
+        let (outcome, error) = match &result {
+            Ok(value) if value.get("paused") == Some(&Value::Bool(true)) => {
+                (SyncOutcome::Paused, None)
+            }
+            Ok(_) => (SyncOutcome::Ok, None),
+            Err(error) => (SyncOutcome::Error, Some(sync_error_category(error))),
+        };
+        if db
+            .record_sync_event(transport, tool, outcome, error)
+            .is_err()
+            && !SYNC_HEALTH_WARNING_PRINTED.swap(true, Ordering::Relaxed)
+        {
+            // At most one short diagnostic per process; a broken stderr must
+            // not panic or replace the successful task result either.
+            let _ = writeln!(
+                io::stderr().lock(),
+                "AgentKanban: sync health could not be recorded"
+            );
+        }
+    }
+    result
+}
+
+fn sync_error_category(error: &ToolCallError) -> &'static str {
+    let ToolCallError::Operation(message) = error else {
+        return "Invalid tool arguments";
+    };
+    if message.starts_with("Conflict:") {
+        "Version conflict; re-read the task"
+    } else if message.starts_with("Task not found;") {
+        "Task not found"
+    } else if message.starts_with("Task is archived;") {
+        "Task is archived"
+    } else if message.starts_with("Invalid tool arguments:")
+        || message.starts_with("Invalid input:")
+    {
+        "Invalid tool arguments"
+    } else if message.starts_with("Cannot identify project:") {
+        "Project is unavailable"
+    } else if message.starts_with("Database error:") {
+        "Database operation failed"
+    } else if message.starts_with("Filesystem error:") {
+        "Filesystem operation failed"
+    } else {
+        "Tool operation failed"
+    }
+}
+
+fn execute_tool_inner(
     db: &Database,
     name: &str,
     arguments: Value,

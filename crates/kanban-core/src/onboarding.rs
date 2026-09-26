@@ -126,9 +126,9 @@ impl Database {
         let existing: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM tasks)
                  OR EXISTS(SELECT 1 FROM projects)
-                 OR EXISTS(SELECT 1 FROM settings)
+                 OR EXISTS(SELECT 1 FROM settings WHERE key!=?1)
                  OR EXISTS(SELECT 1 FROM metadata WHERE key='revision' AND value>0)",
-            [],
+            [crate::sync_health::SETTING_KEY],
             |row| row.get(0),
         )?;
         if existing {

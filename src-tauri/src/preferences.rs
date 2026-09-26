@@ -26,6 +26,9 @@ pub(crate) struct Preferences {
     pub font_scale: u32,
     /// Window opacity in percent (50-100, steps of 5).
     pub opacity: u32,
+    /// Checks run in the desktop process, never through Agent calls.
+    pub auto_check_updates: bool,
+    pub auto_download_updates: bool,
 }
 
 impl Default for Preferences {
@@ -48,6 +51,8 @@ impl Default for Preferences {
             start_hidden: true,
             font_scale: 100,
             opacity: 100,
+            auto_check_updates: true,
+            auto_download_updates: false,
         }
     }
 }
@@ -75,6 +80,7 @@ impl Preferences {
                 "blocked",
                 "todo",
                 "review",
+                "recent",
             ]
             .contains(&self.filter.as_str())
             || ![0, 1, 4, 8, 24, 48, 168].contains(&self.stale_after_hours)
@@ -133,6 +139,8 @@ mod tests {
         assert!(prefs.notify && prefs.start_hidden);
         assert_eq!(prefs.auto_archive_days, 7);
         assert_eq!((prefs.font_scale, prefs.opacity), (100, 100));
+        assert!(prefs.auto_check_updates);
+        assert!(!prefs.auto_download_updates);
         prefs.validate().unwrap();
     }
 
@@ -168,7 +176,7 @@ mod tests {
 
     #[test]
     fn attention_filter_is_valid_and_legacy_filters_still_load() {
-        for filter in ["attention", "blocked", "todo", "review"] {
+        for filter in ["attention", "blocked", "todo", "review", "recent"] {
             Preferences {
                 filter: filter.into(),
                 ..Default::default()

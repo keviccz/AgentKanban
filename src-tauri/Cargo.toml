@@ -1,6 +1,6 @@
 [package]
 name = "agentkanban"
-version = "0.4.0"
+version = "0.5.0"
 description = "A local desktop task board maintained by coding agents"
 edition = "2021"
 default-run = "agentkanban"
@@ -10,6 +10,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 kanban-core = { path = "../crates/kanban-core" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+reqwest = { version = "0.13", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tauri = { version = "2", features = ["tray-icon"] }
@@ -19,7 +21,11 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["io-util", "process", "time"] }
 toml = "0.8"
+tauri-plugin-updater = "2"
 
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.7"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }

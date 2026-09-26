@@ -3,6 +3,9 @@ import { backupDatabase, checkMcp, native, readClients, readDesktopSettings, rea
 import { type ClientStatus, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences } from './types';
 import codexRule from '../examples/codex-AGENTS-snippet.md?raw';
 import harmonyLicense from './fonts/HarmonyOS-Sans-LICENSE.txt?raw';
+import { Updates } from './Updates';
+import { SyncHealth } from './SyncHealth';
+import { ArchiveCenter } from './ArchiveCenter';
 
 export function Panel({ title, children, onClose, initialFocus, busy = false }: { title: string; children: ReactNode; onClose: () => void; initialFocus?: RefObject<HTMLInputElement | null>; busy?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -56,7 +59,10 @@ function RangeSetting({ label, value, min, max, presets, unit = '%', disabled, c
 const PRIMARY_CLIENTS = ['codex', 'claude', 'dsh'];
 
 export function Settings({ preferences, busy, disabled, saveError, update, onShortcutChanged, onClose }: { preferences: Preferences; busy: boolean; disabled: boolean; saveError: string; update: (patch: Partial<Preferences>) => void; onShortcutChanged: () => void; onClose: () => void }) {
-  const [tab, setTab] = useState<'desktop' | 'integration'>('desktop');
+  const [tab, setTab] = useState<'desktop' | 'integration' | 'updates'>('desktop');
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const archiveEntry = useRef<HTMLButtonElement>(null);
   const [desktop, setDesktop] = useState<DesktopSettings | null>(null);
   const [info, setInfo] = useState<IntegrationInfo | null>(null);
   const [clients, setClients] = useState<ClientStatus[]>([]);
@@ -120,8 +126,10 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
   const primary = PRIMARY_CLIENTS.flatMap(id => clients.filter(client => client.id === id));
   const others = clients.filter(client => !PRIMARY_CLIENTS.includes(client.id));
 
+  if (archiveOpen) return <Panel title="归档中心" onClose={onClose} busy={archiveBusy}><ArchiveCenter onBusyChange={setArchiveBusy} onBack={() => { setArchiveOpen(false); requestAnimationFrame(() => archiveEntry.current?.focus()); }} /></Panel>;
+
   return <Panel title="设置" onClose={onClose} busy={backingUp}>
-    <nav className="panel-tabs" aria-label="设置分类"><button aria-pressed={tab === 'desktop'} onClick={() => setTab('desktop')}>桌面</button><button aria-pressed={tab === 'integration'} onClick={() => setTab('integration')}>Agent 接入</button></nav>
+    <nav className="panel-tabs" aria-label="设置分类"><button aria-pressed={tab === 'desktop'} onClick={() => setTab('desktop')}>桌面</button><button aria-pressed={tab === 'integration'} onClick={() => setTab('integration')}>Agent 接入</button><button aria-pressed={tab === 'updates'} onClick={() => setTab('updates')}>软件更新</button></nav>
     <div className="panel-body">
       {!native && <p className="hint">浏览器布局预览。系统设置与 MCP 诊断请在桌面版中使用。</p>}
       {error && <p className="panel-error" role="alert">{error}</p>}
@@ -144,10 +152,12 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
         </section>
         <section className="settings-section"><h3>整理</h3>
           <label className="setting-row"><span>已验收任务自动归档</span><select aria-label="自动归档" value={preferences.auto_archive_days} disabled={disabled} onChange={event => update({ auto_archive_days: Number(event.target.value) })}>{[0, 1, 3, 7, 30].map(days => <option key={days} value={days}>{days ? `${days} 天后` : '关闭'}</option>)}</select></label>
+          <div className="setting-row"><span>归档任务</span><button ref={archiveEntry} className="text-button" disabled={!native || backingUp} onClick={() => setArchiveOpen(true)}>归档中心</button></div>
           <div className="setting-row"><span>数据</span><span className="row-actions"><button className="text-button" disabled={!native} onClick={() => reveal('database')}>打开目录</button><button className="text-button" disabled={!native || backingUp} onClick={() => void runBackup()}>{backingUp ? '正在备份…' : '立即备份'}</button></span></div>
           {backup && <p role="status" className={backup.ok ? 'connection-ok' : 'panel-error'}>{backup.text}</p>}
         </section>
-      </> : <>
+      </> : tab === 'updates' ? <Updates preferences={preferences} disabled={disabled} currentVersion={info?.app_version ?? null} update={update} onLater={onClose} /> : <>
+        <SyncHealth />
         <section className="settings-section"><div className="section-heading"><h3>本地连接</h3><button className="text-button" disabled={!native || working} onClick={() => void reload()}>刷新诊断</button></div>
           {info ? <><p className={info.mcp_exists ? 'connection-ok' : 'panel-error'}>{info.mcp_exists ? '已找到 MCP 程序' : '未找到 MCP 程序，请检查安装目录'}</p>
             <dl className="diagnostics"><dt>最近一次任务变更</dt><dd>{info.last_task_update ? new Date(info.last_task_update).toLocaleString('zh-CN') : '尚无任务记录'}</dd><dt>MCP 程序 <button className="text-button" onClick={() => reveal('mcp')}>打开位置</button></dt><dd>{info.mcp_path}</dd><dt>数据库 <button className="text-button" onClick={() => reveal('database')}>打开位置</button></dt><dd>{info.database_path}</dd></dl>

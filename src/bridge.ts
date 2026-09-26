@@ -1,7 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { defaults, type CaptureInput, type ClientStatus, type TaskReport, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt } from './types';
+import { defaults, type CaptureInput, type ClientStatus, type TaskReport, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt, type UpdateStatus, type SyncHealth, type ArchiveQuery, type ArchivePage } from './types';
 
 export const native = isTauri();
 // Browser mode is only a layout preview. It never creates sample tasks or pretends to save them.
@@ -35,3 +35,11 @@ export const setTrackingPaused = (paused: boolean): Promise<boolean> => invoke('
 export const readHandoff = (id: number): Promise<string> => invoke('get_handoff', { id });
 export const openExternalLink = (url: string): Promise<void> => invoke('open_external_link', { url });
 export const onQuickCreate = (callback: (preferences: Preferences) => void) => native ? listen<Preferences>('quick-create', e => callback(e.payload)) : Promise.resolve(() => {});
+export const readUpdateStatus = (): Promise<UpdateStatus> => invoke('get_update_status');
+export const checkUpdates = (manual = true): Promise<UpdateStatus> => invoke('check_updates', { manual });
+export const downloadUpdate = (): Promise<UpdateStatus> => invoke('download_update');
+export const installUpdate = (): Promise<UpdateStatus> => invoke('install_update');
+export const onUpdateStatus = (callback: (status: UpdateStatus) => void) => native ? listen<UpdateStatus>('update-status', e => callback(e.payload)) : Promise.resolve(() => {});
+export const readSyncHealth = (): Promise<SyncHealth> => invoke('get_sync_health');
+export const listArchivedTasks = (input: ArchiveQuery): Promise<ArchivePage> => invoke('list_archived_tasks', { input });
+export const restoreArchivedTask = (id: number, expected_updated_at: string): Promise<TaskReceipt> => invoke('restore_archived_task', { input: { id, expected_updated_at } });

@@ -1,0 +1,98 @@
+name: Draft Windows release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag to build (for example v0.5.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out the existing release tag
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Set up Rust stable
+        run: |
+          rustup update stable --no-self-update
+          if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain selection failed' }
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Validate core, MCP, and desktop behavior
+        run: |
+          npm run prepare:mcp
+          if ($LASTEXITCODE -ne 0) { throw 'MCP preparation failed' }
+          cargo test --workspace --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Workspace tests failed' }
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Workspace Clippy checks failed' }
+          cargo fmt --all --check
+          if ($LASTEXITCODE -ne 0) { throw 'Rust formatting checks failed' }
+      - name: Verify release scripts offline
+        run: pwsh -NoProfile -File scripts/verify-release.ps1
+      - name: Build signed installer, update manifest, and portable archive
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          # build.ps1 checks tag/package/Cargo/Tauri versions and prepares MCP first.
+          ./scripts/build.ps1 -Tag $env:RELEASE_TAG -Repository $env:GITHUB_REPOSITORY -RequireSignature
+      - name: Create or update the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $assets = @(
+            "release/AgentKanban_${version}_x64-setup.exe",
+            "release/AgentKanban_${version}_x64-setup.exe.sig",
+            'release/latest.json',
+            "release/AgentKanban-$version-windows-x64.zip"
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Missing release asset: $asset" }
+          }
+          $existing = & gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if (-not ($existing | ConvertFrom-Json).isDraft) { throw 'Refusing to modify a published release' }
+            & gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --notes-file docs/RELEASE_NOTES.md
+            if ($LASTEXITCODE -ne 0) { throw 'Draft release notes update failed' }
+            & gh release upload $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --clobber
+          } else {
+            $releaseArgs = @('release', 'create', $env:RELEASE_TAG) + $assets + @(
+              '--repo', $env:GITHUB_REPOSITORY, '--draft', '--verify-tag',
+              '--title', "AgentKanban $env:RELEASE_TAG", '--notes-file', 'docs/RELEASE_NOTES.md'
+            )
+            if ($version.Contains('-')) { $releaseArgs += '--prerelease' }
+            & gh @releaseArgs
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release upload failed' }
+          # Publishing remains a separate, manual decision in GitHub Releases.

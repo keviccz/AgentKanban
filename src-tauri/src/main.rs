@@ -4,6 +4,7 @@ mod clients;
 mod integration;
 mod preferences;
 mod task_actions;
+mod updates;
 mod watch;
 
 use kanban_core::{
@@ -169,8 +170,29 @@ fn archive_task(state: State<AppState>, input: ArchiveById) -> Result<TaskReceip
 }
 
 #[tauri::command(async)]
+fn list_archived_tasks(
+    state: State<AppState>,
+    input: kanban_core::ArchiveQuery,
+) -> Result<kanban_core::TaskPage, String> {
+    state.db.list_archived(input).map_err(error)
+}
+
+#[tauri::command(async)]
+fn restore_archived_task(
+    state: State<AppState>,
+    input: ArchiveById,
+) -> Result<TaskReceipt, String> {
+    state.db.restore_by_id(input).map_err(error)
+}
+
+#[tauri::command(async)]
 fn get_tracking_paused(state: State<AppState>) -> Result<bool, String> {
     state.db.tracking_paused().map_err(error)
+}
+
+#[tauri::command(async)]
+fn get_sync_health(state: State<AppState>) -> Result<kanban_core::SyncHealth, String> {
+    state.db.get_sync_health().map_err(error)
 }
 
 #[tauri::command(async)]
@@ -640,6 +662,7 @@ fn run() -> tauri::Result<()> {
         .clone()
         .unwrap_or_else(|| "AgentKanban".into());
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_window(app)
         }))
@@ -721,6 +744,7 @@ fn run() -> tauri::Result<()> {
             let shortcut_enabled = prefs.shortcut_enabled;
             let stay_in_tray =
                 prefs.start_hidden && std::env::args().any(|arg| arg == AUTOSTART_ARG);
+            app.manage(updates::UpdateState::new(db.clone()));
             app.manage(AppState {
                 db,
                 preferences: Mutex::new(prefs),
@@ -797,6 +821,7 @@ fn run() -> tauri::Result<()> {
                 }
             });
             watch::spawn(app.handle().clone());
+            updates::spawn_auto_check(app.handle().clone());
             if !stay_in_tray {
                 window.show()?;
             }
@@ -846,7 +871,10 @@ fn run() -> tauri::Result<()> {
             review_task,
             send_task_feedback,
             archive_task,
+            list_archived_tasks,
+            restore_archived_task,
             get_tracking_paused,
+            get_sync_health,
             set_tracking_paused,
             get_handoff,
             open_external_link,
@@ -864,7 +892,11 @@ fn run() -> tauri::Result<()> {
             reveal_path,
             backup_database,
             preview_appearance,
-            get_task_reports
+            get_task_reports,
+            updates::get_update_status,
+            updates::check_updates,
+            updates::download_update,
+            updates::install_update
         ])
         .build(context)?;
     app.run(|app, event| {

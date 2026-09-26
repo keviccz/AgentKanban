@@ -1,5 +1,27 @@
 # 验证与验收
 
+## v0.5 更新、同步健康、归档与检索（2026-09-26）
+
+四项按顺序实现，不增加 MCP 工具或 Agent 轮询。同步健康使用独立、有界的处理记录；归档恢复保留原任务与验收状态；检索只读本机快照，最近变更包含人工操作。
+
+| 验证 | 结果与范围 |
+| --- | --- |
+| Rust 工作区 | **121/121 PASS**：core 60、MCP 33、desktop 28；全 targets Clippy `-D warnings`、格式检查通过 |
+| 前端 | TypeScript/Vite 构建与差异检查通过 |
+| 最终 UI 回归 | 更新 **14/14**、同步健康 **13/13**、归档 **15/15**；真实前端、隔离模拟 bridge，含窄窗深色、失败重试、乱序响应、关闭重开与恢复冲突 |
+| 签名与发布脚本 | 官方插件真实下载验签/篡改拒绝包含于 desktop 测试；Node 完整签名核验 **13/13**；发布脚本 **25 场景 / 91 断言**通过 |
+| Windows 原生联动 | **9/9 PASS**：真实 GUI/MCP/CLI、独立 SQLite，覆盖健康查询与教程、MCP 中断/CLI 接续/冲突/暂停恢复、归档分页搜索恢复、跨项目检索人工意见、最近变更/简洁模式及重启持久化；无 pageerror |
+| 原生更新检查 | **2/2 PASS**：实际 GitHub 尚无 Release 的显示、偏好重启保留与拒绝未下载安装 |
+| release MCP | **18/18 PASS**：真实 stdio 协议、Unicode、版本保护、四进程并发、归档恢复与重启 |
+| 检索窄窗 | **1/1 PASS**：320 像素深色、字面关键词、状态过滤、最近变更排序、清空恢复项目聚焦、折叠偏好保留；初轮选择器遗漏按钮计数，修正后通过 |
+| 实际签名构建 | **PASS**：0.5.0 NSIS、签名、latest.json 和便携 ZIP 已生成，实际安装包通过配置公钥的完整签名核验；日志 signed-build.log |
+
+主证据目录：`C:\Users\AlexZ\AppData\Local\Temp\agentkanban-v05-20260926`（workspace-test.log、workspace-clippy.log、native-integration-results.json、native-updates-results.json、release-mcp.json）。最终 UI 证据：`C:\Users\AlexZ\AppData\Local\Temp\agentkanban-v05-final-ui`。发布脚本证据：`C:\Users\AlexZ\AppData\Local\Temp\agentkanban-release-test-b3bd54fea5a64ba3af92b3806bc85469`。
+
+初次失败证据保留：健康 fixture 误传只读 request 字段、UI 选择器歧义/零高度列表等待、构建与隔离 MCP 同时占用侧车、Rust 格式检查均在修正测试输入或执行安排后通过。产品修复包括发布时错密钥仅警告却继续产物，以及新更新事件到达后旧状态读取失败覆盖界面的竞态。
+
+未执行正式 Release 发布、GitHub Actions 现场运行、真实自动升级安装或人工日常验收。现有安装版及其 MCP 保持运行；原生测试仅使用独立数据目录。新功能需安装新版本并让客户端重新加载 MCP 后生效。
+
 ## MCP 断线接续与新手教程（2026-09-26）
 
 新增同程序单次调用入口 `agentkanban-mcp --call <工具名> --input-file <JSON文件|->`，与 MCP 共用暂停、参数校验、版本冲突和原始上报记录逻辑。同步规则仅在传输断线时允许主 Agent 使用原程序与数据目录，先精读原 key 再合并正常里程碑；没有新增 MCP 工具、常驻服务或轮询。全局精简规则新增的断线段为 **206 个 Unicode 字符**，不是 token 测量。

@@ -1,4 +1,4 @@
-import type { Filter, Task } from './types';
+import type { Filter, Project, Task } from './types';
 
 export function relativeTime(timestamp: string, now: number) {
   const minutes = Math.max(0, Math.floor((now - Date.parse(timestamp)) / 60000));
@@ -18,8 +18,10 @@ export const awaitsReview = (task: Task) => task.status === 'done' && task.revie
 export const inActiveList = (task: Task) => task.status !== 'done' || awaitsReview(task);
 // Everything the user has to act on: a blocker, a question, or a delivery to review.
 export const needsAttention = (task: Task) => task.status === 'blocked' || awaitsReview(task) || (task.status !== 'done' && task.needs_input !== '');
-export const matchesFilter = (task: Task, filter: Filter) => filter === 'all' || (filter === 'attention' ? needsAttention(task) : task.status === filter);
+export const matchesFilter = (task: Task, filter: Filter) => filter === 'all' || filter === 'recent' || (filter === 'attention' ? needsAttention(task) : task.status === filter);
 // Filters saved by v0.3 and earlier: blocked/review now live under attention, todo under all.
-export const normalizeFilter = (value: string): Filter => value === 'blocked' || value === 'review' || value === 'attention' ? 'attention' : value === 'in_progress' ? 'in_progress' : 'all';
+export const normalizeFilter = (value: string): Filter => value === 'blocked' || value === 'review' || value === 'attention' ? 'attention' : value === 'in_progress' || value === 'recent' ? value : 'all';
+export const matchesSearch = (project: Project, task: Task, query: string) => !query || [task.title, project.name, project.path, task.task_key, task.goal, task.request, task.progress, task.user_note].some(value => value.toLowerCase().includes(query));
+export const changedAt = (task: Task) => Date.parse(task.updated_at) || 0;
 export const stepProgress = (task: Task) => task.steps.length ? `${task.steps.filter(step => step.status === 'done').length}/${task.steps.length}` : '';
 export const reviewLabels = { none: '', pending: '待你验收', accepted: '已验收', changes_requested: '需修改' };

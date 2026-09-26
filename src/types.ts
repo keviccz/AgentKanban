@@ -1,5 +1,5 @@
 export type Status = 'todo' | 'in_progress' | 'blocked' | 'done';
-export type Filter = 'all' | 'attention' | 'in_progress';
+export type Filter = 'all' | 'attention' | 'in_progress' | 'recent';
 export type ReviewStatus = 'none' | 'pending' | 'accepted' | 'changes_requested';
 export interface Deliverable { label: string; uri: string }
 export interface Step { title: string; status: Status; note?: string }
@@ -16,6 +16,9 @@ export interface Task {
 export interface TaskReport { reported_at: string; payload: Record<string, unknown> }
 export interface TaskReceipt { id: number; status: Status; updated_at: string }
 export interface CaptureInput { project_path: string; task_key: string; title: string; request: string }
+export interface ArchivedTask extends Task { project_name: string; project_path: string }
+export interface ArchiveQuery { query?: string; limit?: number; offset?: number }
+export interface ArchivePage { items: ArchivedTask[]; next_offset: number | null }
 export interface Project { id: number; name: string; path: string; tasks: Task[] }
 export const isTutorialTask = (project: Pick<Project, 'name'>, task: Pick<Task, 'agent' | 'task_key'>) => project.name === '新手教程'
   && task.agent === '教学示例'
@@ -29,6 +32,7 @@ export interface Preferences {
   stale_after_hours: number; shortcut_enabled: boolean;
   notify: boolean; auto_archive_days: number; start_hidden: boolean;
   font_scale: number; opacity: number;
+  auto_check_updates: boolean; auto_download_updates: boolean;
 }
 export const defaults: Preferences = {
   theme: 'light', always_on_top: true, compact: false, concise: false, filter: 'all',
@@ -36,6 +40,7 @@ export const defaults: Preferences = {
   focused_project: null, pinned_projects: [], stale_after_hours: 24, shortcut_enabled: true,
   notify: true, auto_archive_days: 7, start_hidden: true,
   font_scale: 100, opacity: 100,
+  auto_check_updates: true, auto_download_updates: false,
 };
 export interface IntegrationInfo {
   app_version: string; mcp_path: string; mcp_exists: boolean; database_path: string;
@@ -52,4 +57,16 @@ export interface DesktopSettings {
   autostart_error: string | null; shortcut_error: string | null;
 }
 export interface McpCheck { ok: boolean; message: string }
+export interface SyncEvent {
+  at: string; transport: 'mcp' | 'cli'; tool: string;
+  outcome: 'ok' | 'paused' | 'error'; error: string | null;
+}
+export interface SyncHealth {
+  paused: boolean; last_call: SyncEvent | null; last_success: SyncEvent | null; last_write: SyncEvent | null;
+}
+export interface UpdateStatus {
+  phase: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'installing' | 'blocked' | 'error';
+  current_version: string; version: string | null; notes: string | null; checked_at: string | null;
+  downloaded_bytes: number; total_bytes: number | null; message: string;
+}
 export const labels: Record<Status, string> = { todo: '待办', in_progress: '进行中', blocked: '受阻', done: '已完成' };

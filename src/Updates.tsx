@@ -1,0 +1,118 @@
+import { useEffect, useRef, useState } from 'react';
+import { checkUpdates, downloadUpdate, installUpdate, native, onUpdateStatus, readUpdateStatus } from './bridge';
+import type { Preferences, UpdateStatus } from './types';
+
+const phaseLabels: Record<UpdateStatus['phase'], string> = {
+  idle: '更新检查', checking: '正在检查更新…', available: '发现新版本',
+  downloading: '正在后台下载…', ready: '更新已下载，可以安装',
+  installing: '正在启动安装程序…', blocked: '更新已下载，安装暂不可用', error: '更新未完成',
+};
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${Math.max(0, Math.floor(bytes))} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function Updates({ preferences, disabled, currentVersion, update, onLater }: {
+  preferences: Preferences; disabled: boolean; currentVersion: string | null;
+  update: (patch: Partial<Preferences>) => void; onLater: () => void;
+}) {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [reading, setReading] = useState(native);
+  const [readError, setReadError] = useState('');
+  const [listenError, setListenError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [action, setAction] = useState<'check' | 'download' | 'install' | null>(null);
+  const mounted = useRef(false);
+  const eventVersion = useRef(0);
+  const inFlight = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    if (!native) return () => { mounted.current = false; };
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    setReading(true); setReadError('');
+    async function read() {
+      const version = eventVersion.current;
+      try {
+        const next = await readUpdateStatus();
+        if (!disposed && version === eventVersion.current) { setStatus(next); setReadError(''); }
+      } catch (e) { if (!disposed && version === eventVersion.current) setReadError(`读取更新状态失败：${String(e)}`); }
+      finally { if (!disposed) setReading(false); }
+    }
+    // Native owns checks and downloads; leaving Settings only removes this listener.
+    void onUpdateStatus(next => {
+      if (disposed) return;
+      eventVersion.current += 1;
+      setStatus(next); setReading(false); setReadError(''); setActionError('');
+    }).then(stop => {
+      if (disposed) { stop(); return; }
+      unlisten = stop; setListenError(''); void read();
+    }, e => {
+      if (disposed) return;
+      setListenError(`更新状态自动刷新不可用：${String(e)}`); void read();
+    });
+    return () => { disposed = true; mounted.current = false; unlisten?.(); };
+  }, [attempt]);
+
+  async function run(kind: 'check' | 'download' | 'install') {
+    if (inFlight.current) return;
+    inFlight.current = true; setAction(kind); setActionError('');
+    const version = eventVersion.current;
+    try {
+      const next = await (kind === 'check' ? checkUpdates(true) : kind === 'download' ? downloadUpdate() : installUpdate());
+      if (mounted.current && version === eventVersion.current) setStatus(next);
+    } catch (e) {
+      if (mounted.current) { setActionError(`操作失败：${String(e)}`); setAttempt(value => value + 1); }
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setAction(null);
+    }
+  }
+
+  const phase = status?.phase ?? 'idle';
+  const active = action !== null || phase === 'checking' || phase === 'downloading' || phase === 'installing';
+  const total = status?.total_bytes && status.total_bytes > 0 ? status.total_bytes : null;
+  const downloaded = Math.max(0, status?.downloaded_bytes ?? 0);
+  const errorState = phase === 'error' || phase === 'blocked';
+  const canDownload = phase === 'available' || (phase === 'error' && Boolean(status?.version));
+  const canInstall = phase === 'ready' || phase === 'blocked';
+
+  return <div className="updates">
+    <section className="settings-section">
+      <div className="section-heading"><h3>软件更新</h3><span className="update-current">当前 {status?.current_version || currentVersion || '—'}</span></div>
+      {!native ? <p className="hint">请在桌面版检查 GitHub Releases 和安装更新。</p> : <>
+        <p className={`update-status ${errorState ? 'panel-error' : phase === 'available' || phase === 'ready' ? 'connection-ok' : ''}`} role="status">{reading && !status ? '正在读取更新状态…' : phaseLabels[phase]}</p>
+        {status?.message && <p className={errorState ? 'panel-error' : 'hint'}>{status.message}</p>}
+        {status && !status.message && phase === 'idle' && <p className="hint">{status.checked_at ? '本次检查没有可安装的新版本。' : '尚未检查更新。'}</p>}
+        {status?.checked_at && <p className="hint update-checked">上次检查：<time dateTime={status.checked_at}>{new Date(status.checked_at).toLocaleString('zh-CN')}</time></p>}
+        {phase === 'downloading' && <div className="update-progress">
+          <progress aria-label="更新下载进度" max={total ?? 1} value={total ? Math.min(downloaded, total) : undefined} />
+          <p>{total ? `${formatBytes(downloaded)} / ${formatBytes(total)}（${Math.min(100, Math.floor(downloaded / total * 100))}%）` : `已下载 ${formatBytes(downloaded)}，总大小未知`}</p>
+          <p className="hint">返回看板后会继续下载，安装前仍需你确认。</p>
+        </div>}
+        {phase === 'ready' && <p className="hint">点击安装后会退出看板并启动安装程序；任务数据保留。</p>}
+        {phase === 'blocked' && <p className="hint">可稍后重试安装；完全退出应用后需要重新下载。</p>}
+        {phase === 'installing' && <p className="hint">请等待安装程序完成；当前显示的版本尚未更新。</p>}
+        {(readError || listenError || actionError) && <div className="update-error" role="alert">
+          {readError && <p className="panel-error">{readError}</p>}{listenError && <p className="panel-error">{listenError}</p>}{actionError && <p className="panel-error">{actionError}</p>}
+          {(readError || listenError) && <button className="text-button" disabled={reading} onClick={() => setAttempt(value => value + 1)}>重新读取更新状态</button>}
+        </div>}
+        <div className="form-actions">
+          <button className="outline-button" disabled={reading || active} onClick={() => void run('check')}>{phase === 'checking' || action === 'check' ? '正在检查…' : phase === 'error' && !status?.version ? '重试检查' : '检查更新'}</button>
+          {canDownload && <button className="primary-button" disabled={reading || active} onClick={() => void run('download')}>{phase === 'error' ? '重试下载' : '后台下载'}</button>}
+          {canInstall && <button className="primary-button" disabled={reading || active} onClick={() => void run('install')}>{phase === 'blocked' ? '重试安装' : '安装更新'}</button>}
+          {phase === 'blocked' && <button className="text-button" onClick={onLater}>稍后</button>}
+        </div>
+        {status?.version && <section className="update-release"><h4>最新版本 {status.version}</h4><details open><summary>更新说明</summary><p>{status.notes || '此版本未提供更新说明。'}</p></details></section>}
+      </>}
+    </section>
+    <section className="settings-section"><h3>更新偏好</h3>
+      <label className="setting-row"><span>自动检查更新<small>后台检查 GitHub Releases</small></span><input type="checkbox" checked={preferences.auto_check_updates ?? true} disabled={!native || disabled} onChange={event => update({ auto_check_updates: event.target.checked })} /></label>
+      <label className="setting-row"><span>自动后台下载<small>发现新版本时下载，安装仍由你确认</small></span><input type="checkbox" checked={preferences.auto_download_updates ?? false} disabled={!native || disabled} onChange={event => update({ auto_download_updates: event.target.checked })} /></label>
+    </section>
+  </div>;
+}

@@ -246,3 +246,59 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
   .panel-heading h2 { font-size: 13px; }
   .report dl > div { grid-template-columns: 56px minmax(0, 1fr); }
 }
+
+.update-current { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; text-align: right; }
+.update-status { margin: 8px 0; font-size: 13px; line-height: 1.7; }
+.update-checked time { white-space: normal; }
+.update-progress progress { width: 100%; height: 8px; accent-color: var(--teal); }
+.update-progress p { font-size: 11px; color: var(--muted); line-height: 1.7; margin: 6px 0; }
+.update-error p { margin: 6px 0; }
+.update-release { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.update-release h4 { font-size: 12px; margin: 0 0 4px; overflow-wrap: anywhere; }
+.update-release details > p { font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0; }
+
+.sync-paused { margin: 4px 0 10px; }
+.panel .sync-records { margin: 10px 0; }
+.sync-records > div { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 8px; margin: 8px 0; }
+.panel .sync-records dt, .panel .sync-records dd { margin: 0; font-size: 11px; line-height: 1.7; }
+.sync-records time { display: block; color: var(--muted); font-size: 10px; }
+.sync-scope { margin-bottom: 6px; }
+.sync-error p { margin: 6px 0; }
+.sync-diagnostics { margin-top: 6px; }
+
+.archive-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; }
+.archive-search { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 12px; }
+.archive-search .form-field { flex: 1; min-width: 140px; margin: 0; }
+.archive-search .form-field > span { font-size: 11px; color: var(--muted); }
+.archive-search .outline-button { margin-bottom: 1px; }
+.archive-search > .text-button { flex-basis: 100%; text-align: left; }
+.archive-count { margin-bottom: 2px; }
+.archive-list { list-style: none; margin: 0; padding: 0; }
+.archive-task { padding: 13px 0; border-bottom: 1px solid var(--line); }
+.archive-project { font-size: 10px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+.archive-project small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.archive-task h3 { font-size: 13px; line-height: 1.6; margin: 6px 0 4px; overflow-wrap: anywhere; }
+.archive-state { font-size: 11px; margin: 4px 0; line-height: 1.7; }
+.archive-progress { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 11px; line-height: 1.7; color: var(--muted); margin: 4px 0; overflow-wrap: anywhere; }
+.archive-task-footer { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 10px; color: var(--muted); margin-top: 7px; }
+.archive-task-footer > span { min-width: 0; overflow-wrap: anywhere; }
+.archive-task-footer button { flex-shrink: 0; }
+.archive-task-footer time { white-space: normal; }
+.archive-notice, .archive-error p { margin: 6px 0; overflow-wrap: anywhere; }
+.archive-empty { font-size: 12px; line-height: 1.8; color: var(--muted); padding: 20px 0; text-align: center; }
+.archive-more { margin-top: 16px; width: 100%; }
+
+.search-toggle.is-active { color: var(--teal); background: var(--hover); }
+.board-search { flex-shrink: 0; padding: 0 16px 8px; }
+.board-search-row { display: flex; gap: 10px; align-items: center; }
+.board-search input { flex: 1; min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--text); font-size: 12px; }
+.board-search-row button { flex-shrink: 0; }
+.search-scope, .board-view-hint { font-size: 10px; line-height: 1.7; color: var(--muted); margin: 6px 0 0; overflow-wrap: anywhere; }
+.board-view-hint { margin: 8px 0 2px; }
+.project-heading-static:hover { color: inherit; }
+.task-recent .task-meta, .task-recent .update-time { flex-wrap: wrap; }
+@media (max-width: 360px) {
+  .filters button { font-size: 11px; padding-left: 2px; padding-right: 2px; }
+  .filter-count { margin-left: 3px; }
+  .project-focus { gap: 7px; }
+}
