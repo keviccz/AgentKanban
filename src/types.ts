@@ -1,4 +1,5 @@
 import type { ActivityStyle } from './Activity';
+import type { Accent, ProjectColor } from './accent';
 export type Status = 'todo' | 'in_progress' | 'blocked' | 'done';
 export type Filter = 'all' | 'attention' | 'in_progress' | 'recent';
 export type ReviewStatus = 'none' | 'pending' | 'accepted' | 'changes_requested';
@@ -38,6 +39,7 @@ export interface Preferences {
   project_sort: 'recent' | 'name';
   language: 'auto' | 'zh' | 'en';
   activity_style: ActivityStyle; activity_minutes: number;
+  notify_done: boolean; accent: Accent; project_colors: Record<string, ProjectColor>;
 }
 export const defaults: Preferences = {
   theme: 'light', always_on_top: true, compact: false, concise: false, filter: 'all',
@@ -49,6 +51,7 @@ export const defaults: Preferences = {
   project_sort: 'recent',
   language: 'auto',
   activity_style: 'pulse', activity_minutes: 30,
+  notify_done: false, accent: 'teal', project_colors: {},
 };
 export interface IntegrationInfo {
   app_version: string; mcp_path: string; mcp_exists: boolean; database_path: string;

@@ -1,7 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { defaults, type CaptureInput, type ClientStatus, type TaskReport, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt, type UpdateStatus, type SyncHealth, type ArchiveQuery, type ArchivePage, type BlockedProject } from './types';
+import { defaults, type CaptureInput, type ClientStatus, type TaskReport, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt, type UpdateStatus, type SyncHealth, type ArchiveQuery, type ArchivePage, type ArchivedTask, type BlockedProject } from './types';
 
 export const native = isTauri();
 // Browser mode is only a layout preview. It never creates sample tasks or pretends to save them.
@@ -42,7 +42,11 @@ export function dragWindow(event: { button: number; target: EventTarget | null; 
   event.preventDefault();
   void getCurrentWindow().startDragging();
 }
-export const archiveProject = (projectId: number): Promise<number> => invoke('archive_project', { projectId });
+export const archiveProject = (projectId: number): Promise<number[]> => invoke('archive_project', { projectId });
+export const restoreTasks = (ids: number[]): Promise<number> => invoke('restore_tasks', { ids });
+export const undoAccept = (id: number, expectedUpdatedAt: string): Promise<TaskReceipt> => invoke('undo_accept', { id, expectedUpdatedAt });
+export const readFinishedSince = (since: string): Promise<ArchivedTask[]> => invoke('get_finished_since', { since });
+export const renameProject = (projectId: number, name: string): Promise<void> => invoke('rename_project', { projectId, name });
 export const archiveTask = (id: number, expected_updated_at: string): Promise<TaskReceipt> => invoke('archive_task', { input: { id, expected_updated_at } });
 export const readTrackingPaused = (): Promise<boolean> => native ? invoke('get_tracking_paused') : Promise.resolve(false);
 export const setTrackingPaused = (paused: boolean): Promise<boolean> => invoke('set_tracking_paused', { paused });

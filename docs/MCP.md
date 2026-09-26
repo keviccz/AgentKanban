@@ -122,6 +122,8 @@ claude mcp add --transport stdio --scope user agentkanban -- "$env:LOCALAPPDATA\
 
 用户可在浮窗底栏暂停记录：此后三个工具都返回成功结果 `{"paused":true,"recorded":false,"message":...}`，不读写任务。Agent 继续工作，不重试或轮询，在下一个正常里程碑或新任务再尝试一次。恢复在下次正常调用时生效，不会主动唤醒 Agent，也不回补暂停期间的逐条操作。暂停标记每次调用都检查，已有 MCP 进程无需重启。
 
+用户在浮窗右键项目选择「屏蔽项目」后，带该项目 `project_path` 的调用返回成功结果 `{"blocked":true,"recorded":false,"message":...}`，不读写任务。Agent 此后在该项目中不再调用看板、不重试、不提及；这不是传输故障，不能触发备用入口。屏蔽列表每次调用都检查，用户在设置 → Agent 接入取消屏蔽后立即恢复。
+
 用户可在浮窗任务详情中归档任务（二次确认，数据保留，不计为 Agent 更新），通过设置中的归档中心搜索并恢复。GUI 恢复要求当前版本，保留任务身份、验收结果、用户意见与上报记录，不刷新 Agent 的活动时间。Agent 也可调用 `task_archive(archived=false)` 恢复；三个工具的接口保持不变。
 
 新任务直接设为 `done`，或从其他状态转为 `done`，会进入 `pending`。在用户验收前 Agent 又把任务改为其他状态时，待验收被取消并记录 `review_withdrawn_at`。用户在浮窗中通过验收后成为 `accepted`；退回修改必须填写意见，任务变为 `todo` 与 `changes_requested`，重新进入默认未完成查询。Agent 继续执行时保留修改请求，下一次完成重新等待验收。已通过的完成任务被 Agent 实质修改后也需重新验收。

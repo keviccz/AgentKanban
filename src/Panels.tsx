@@ -7,7 +7,11 @@ import { Updates } from './Updates';
 import { SyncHealth } from './SyncHealth';
 import { ArchiveCenter } from './ArchiveCenter';
 import { ACTIVITY_STYLES, ActivityLabel, ActivityMark, activityLabels } from './Activity';
+import { ACCENTS, accentLabels, swatch } from './accent';
+import { Summary } from './Summary';
+import { showCopied } from './copyFeedback';
 import { locale, t } from './i18n';
+import { Icon } from './Icon';
 
 export function Panel({ title, children, onClose, initialFocus, busy = false }: { title: string; children: ReactNode; onClose: () => void; initialFocus?: RefObject<HTMLInputElement | null>; busy?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -58,18 +62,20 @@ function BlockedProjects({ onChanged }: { onChanged: () => void }) {
 }
 
 export function CopyButton({ text, label = t("复制"), copied = t("已复制"), title, onFailure }: { text: string; label?: string; copied?: string; title?: string; onFailure?: () => void }) {
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
-  async function copy() {
+  async function copy(x: number, y: number) {
     try {
       await navigator.clipboard.writeText(text);
-      setMessage(copied);
-    } catch { setMessage(t("复制失败，请选择文字复制")); onFailure?.(); }
+      showCopied(x, y, copied);
+      setMessage({ ok: true, text: copied });
+    } catch { setMessage({ ok: false, text: t("复制失败，请选择文字复制") }); onFailure?.(); }
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setMessage(''), 2400);
+    timer.current = setTimeout(() => setMessage(null), 2400);
   }
-  return <span className="copy-control"><button type="button" className="text-button" title={title} onClick={() => void copy()}>{label}</button><span className="copy-result" role="status">{message}</span></span>;
+  // Success shows as a bubble by the pointer; the status text stays for screen readers.
+  return <span className="copy-control"><button type="button" className="text-button" title={title} onClick={event => void copy(event.clientX, event.clientY)}>{label}</button><span className={`copy-result ${message?.ok ? 'sr-only' : ''}`} role="status">{message?.text}</span></span>;
 }
 
 const connected = (client: ClientStatus) => client.mcp === 'ok' && client.rules !== false;
@@ -96,6 +102,8 @@ const PRIMARY_CLIENTS = ['codex', 'claude', 'dsh'];
 export function Settings({ preferences, busy, disabled, saveError, update, onShortcutChanged, onBoardChanged, onClose }: { preferences: Preferences; busy: boolean; disabled: boolean; saveError: string; update: (patch: Partial<Preferences>) => void; onShortcutChanged: () => void; onBoardChanged: () => void; onClose: () => void }) {
   const [tab, setTab] = useState<'desktop' | 'integration' | 'updates'>('desktop');
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const summaryEntry = useRef<HTMLButtonElement>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const archiveEntry = useRef<HTMLButtonElement>(null);
   const [desktop, setDesktop] = useState<DesktopSettings | null>(null);
@@ -161,6 +169,7 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
   const primary = PRIMARY_CLIENTS.flatMap(id => clients.filter(client => client.id === id));
   const others = clients.filter(client => !PRIMARY_CLIENTS.includes(client.id));
 
+  if (summaryOpen) return <Panel title={t("工作摘要")} onClose={onClose}><div className="archive-toolbar summary-back"><button className="icon-button" aria-label={t("返回设置")} title={t("返回设置")} onClick={() => { setSummaryOpen(false); requestAnimationFrame(() => summaryEntry.current?.focus()); }}><Icon name="back" /></button></div><Summary /></Panel>;
   if (archiveOpen) return <Panel title={t("归档中心")} onClose={onClose} busy={archiveBusy}><ArchiveCenter onBusyChange={setArchiveBusy} onBack={() => { setArchiveOpen(false); requestAnimationFrame(() => archiveEntry.current?.focus()); }} /></Panel>;
 
   return <Panel title={t("设置")} onClose={onClose} busy={backingUp}>
@@ -171,6 +180,7 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
       {saveError && <p className="panel-error" role="alert">{saveError}</p>}
       {tab === 'desktop' ? <>
         <section className="settings-section"><h3>{t("外观")}</h3>
+          <div className="setting-row"><span>{t("主题色")}<small>{t(accentLabels[preferences.accent])}</small></span><span className="accent-swatches" role="radiogroup" aria-label={t("主题色")}>{ACCENTS.map(accent => <button key={accent} type="button" role="radio" aria-checked={preferences.accent === accent} aria-label={t(accentLabels[accent])} title={t(accentLabels[accent])} disabled={disabled} style={{ background: swatch(accent) }} onClick={() => update({ accent })} />)}</span></div>
           <label className="setting-row"><span>{t("语言")}<small>{locale() === 'en-US' ? '语言' : 'Language'}</small></span><select aria-label={t("语言")} value={preferences.language} disabled={disabled} onChange={event => update({ language: event.target.value === 'zh' || event.target.value === 'en' ? event.target.value : 'auto' })}><option value="auto">{t("跟随系统")}</option><option value="zh">中文</option><option value="en">English</option></select></label>
           <label className="setting-row"><span>{t("主题")}</span><select aria-label={t("主题")} value={preferences.theme} disabled={disabled} onChange={event => update({ theme: event.target.value === 'dark' || event.target.value === 'light' ? event.target.value : 'system' })}><option value="system">{t("跟随系统")}</option><option value="light">{t("浅色")}</option><option value="dark">{t("深色")}</option></select></label>
           <label className="setting-row"><span>{t("项目排序")}<small>{t("置顶项目始终在前")}</small></span><select aria-label={t("项目排序")} value={preferences.project_sort} disabled={disabled} onChange={event => update({ project_sort: event.target.value === 'name' ? 'name' : 'recent' })}><option value="recent">{t("最近有更新的在前")}</option><option value="name">{t("按名称首字母")}</option></select></label>
@@ -187,13 +197,16 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
           {desktop?.autostart_error && <p className="panel-error">{desktop.autostart_error}</p>}
           <label className="setting-row"><span>{t("全局快捷键")}<small>{t("Ctrl + Alt + K　显示 / 隐藏")}<br />{t("Ctrl + Alt + N　快速新建")}</small></span><input type="checkbox" checked={desktop?.shortcut_enabled ?? false} disabled={!desktop || working || busy} onChange={event => void toggle('shortcut', event.target.checked)} /></label>
           {desktop?.shortcut_error && <p className="panel-error">{desktop.shortcut_error}</p>}
+          <div className="setting-row"><span>{t("看板快捷键")}<small>{t("↑↓ 选择　Enter 打开　A 验收　E 归档　/ 搜索")}</small></span></div>
         </section>
         <section className="settings-section"><h3>{t("提醒")}</h3>
           <label className="setting-row"><span>{t("需要我处理时通知")}<small>{t("受阻或需要你补充")}</small></span><input type="checkbox" checked={preferences.notify} disabled={disabled} onChange={event => update({ notify: event.target.checked })} /></label>
+          <label className="setting-row"><span>{t("Agent 完成任务时通知")}<small>{t("默认关闭；完成的任务会直接变灰")}</small></span><input type="checkbox" checked={preferences.notify_done} disabled={disabled} onChange={event => update({ notify_done: event.target.checked })} /></label>
           <label className="setting-row"><span>{t("多久未更新时提示")}</span><select aria-label={t("久未更新阈值")} value={preferences.stale_after_hours} disabled={disabled} onChange={event => update({ stale_after_hours: Number(event.target.value) })}>{[0, 1, 4, 8, 24, 48, 168].map(hours => <option key={hours} value={hours}>{hours ? hours === 168 ? t("7 天") : t("{0} 小时", hours) : t("关闭")}</option>)}</select></label>
         </section>
         <section className="settings-section"><h3>{t("整理")}</h3>
           <label className="setting-row"><span>{t("已完成任务自动归档")}</span><select aria-label={t("自动归档")} value={preferences.auto_archive_days} disabled={disabled} onChange={event => update({ auto_archive_days: Number(event.target.value) })}>{[0, 1, 3, 7, 30].map(days => <option key={days} value={days}>{days ? t("{0} 天后", days) : t("关闭")}</option>)}</select></label>
+          <div className="setting-row"><span>{t("工作摘要")}<small>{t("最近完成的任务，可复制为 Markdown")}</small></span><button ref={summaryEntry} className="text-button" disabled={!native} onClick={() => setSummaryOpen(true)}>{t("查看摘要")}</button></div>
           <div className="setting-row"><span>{t("归档任务")}</span><button ref={archiveEntry} className="text-button" disabled={!native || backingUp} onClick={() => setArchiveOpen(true)}>{t("归档中心")}</button></div>
           <div className="setting-row"><span>{t("数据")}</span><span className="row-actions"><button className="text-button" disabled={!native} onClick={() => reveal('database')}>{t("打开目录")}</button><button className="text-button" disabled={!native || backingUp} onClick={() => void runBackup()}>{backingUp ? t("正在备份…") : t("立即备份")}</button></span></div>
           {backup && <p role="status" className={backup.ok ? 'connection-ok' : 'panel-error'}>{backup.text}</p>}

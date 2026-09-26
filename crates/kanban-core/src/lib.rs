@@ -2,6 +2,7 @@
 
 mod archive_center;
 mod blocking;
+mod board_actions;
 mod onboarding;
 mod project;
 mod sync_health;

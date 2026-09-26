@@ -593,7 +593,7 @@ fn archive_project_hides_every_board_task_and_each_restores_on_its_own() {
     let project_id = fixture.task("project:working").project_id;
     let revision = fixture.db.revision().unwrap();
 
-    assert_eq!(fixture.db.archive_project(project_id).unwrap(), 2);
+    assert_eq!(fixture.db.archive_project(project_id).unwrap().len(), 2);
     assert_eq!(fixture.db.revision().unwrap(), revision + 1);
     assert!(fixture.db.board().unwrap().projects.is_empty());
     let task = fixture.task("project:working");
@@ -601,7 +601,7 @@ fn archive_project_hides_every_board_task_and_each_restores_on_its_own() {
     assert_eq!(task.status, Status::InProgress);
 
     // Nothing left to archive: no revision bump, and bad ids are rejected.
-    assert_eq!(fixture.db.archive_project(project_id).unwrap(), 0);
+    assert!(fixture.db.archive_project(project_id).unwrap().is_empty());
     assert_eq!(fixture.db.revision().unwrap(), revision + 1);
     assert!(matches!(fixture.db.archive_project(0), Err(Error::InvalidInput(_))));
 

@@ -195,8 +195,28 @@ fn get_blocked_projects(state: State<AppState>) -> Result<Vec<kanban_core::Block
 }
 
 #[tauri::command(async)]
-fn archive_project(state: State<AppState>, project_id: i64) -> Result<usize, String> {
+fn archive_project(state: State<AppState>, project_id: i64) -> Result<Vec<i64>, String> {
     state.db.archive_project(project_id).map_err(error)
+}
+
+#[tauri::command(async)]
+fn restore_tasks(state: State<AppState>, ids: Vec<i64>) -> Result<usize, String> {
+    state.db.restore_many(&ids).map_err(error)
+}
+
+#[tauri::command(async)]
+fn undo_accept(state: State<AppState>, id: i64, expected_updated_at: String) -> Result<TaskReceipt, String> {
+    state.db.undo_accept(id, &expected_updated_at).map_err(error)
+}
+
+#[tauri::command(async)]
+fn get_finished_since(state: State<AppState>, since: String) -> Result<Vec<kanban_core::ListedTask>, String> {
+    state.db.finished_since(&since).map_err(error)
+}
+
+#[tauri::command(async)]
+fn rename_project(state: State<AppState>, project_id: i64, name: String) -> Result<(), String> {
+    state.db.rename_project(project_id, &name).map_err(error)
 }
 
 #[tauri::command(async)]
@@ -927,6 +947,10 @@ fn run() -> tauri::Result<()> {
             send_task_feedback,
             archive_task,
             archive_project,
+            restore_tasks,
+            undo_accept,
+            get_finished_since,
+            rename_project,
             set_project_blocked,
             get_blocked_projects,
             pick_project_folder,

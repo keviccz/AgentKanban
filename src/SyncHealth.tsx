@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { native, readSyncHealth } from './bridge';
 import type { SyncEvent, SyncHealth as Health } from './types';
 import { locale, t } from './i18n';
+import { showCopied } from './copyFeedback';
 
 const transportLabel = (event: SyncEvent) => event.transport === 'mcp' ? 'MCP' : t("备用入口（CLI）");
 const outcomeLabel: Record<SyncEvent['outcome'], string> = { ok: '成功', paused: '暂停时跳过', error: '失败' };
@@ -41,11 +42,11 @@ export function SyncHealth() {
   const call = health?.last_call;
   const errorReason = readError || (call?.outcome === 'error' ? call.error || t("未提供错误原因。") : '');
   const briefReason = errorReason.replace(/\s+/g, ' ').trim();
-  async function copyReason() {
+  async function copyReason(x: number, y: number) {
     const version = requestVersion.current;
     try {
       await navigator.clipboard.writeText(errorReason);
-      if (version === requestVersion.current) setCopyResult(t("已复制"));
+      if (version === requestVersion.current) { showCopied(x, y); setCopyResult(t("已复制")); }
     } catch {
       if (version !== requestVersion.current) return;
       setCopyResult(t("复制失败，请选择下方完整文字复制。"));
@@ -71,7 +72,7 @@ export function SyncHealth() {
       </>}
       {errorReason && <div className="sync-error">
         {!readError && <p className="panel-error">{briefReason.length > 180 ? `${briefReason.slice(0, 180)}…` : briefReason}</p>}
-        <span className="copy-control"><button className="text-button" onClick={() => void copyReason()}>{t("复制错误原因")}</button><span className="copy-result" role="status">{copyResult}</span></span>
+        <span className="copy-control"><button className="text-button" onClick={event => void copyReason(event.clientX, event.clientY)}>{t("复制错误原因")}</button><span className="copy-result" role="status">{copyResult}</span></span>
       </div>}
       {(call || health?.last_success || health?.last_write || errorReason) && <details className="sync-diagnostics" ref={diagnostics}><summary>{t("更多诊断")}</summary>
         <dl className="diagnostics">

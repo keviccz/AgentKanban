@@ -1,3 +1,3 @@
 ## AgentKanban
-会修改文件的任务自动记入 AgentKanban；问答、只读或用户说不用记时跳过。同一任务仅主 Agent 记账，子 Agent 返回结果。开工用 task_list(project_path, query=任务关键词) 定向找；已知 task_key 直接精读。有匹配就精读需求和用户意见后沿用；确认无匹配才以 auto:<简短标识> 新建，写 agent、goal、acceptance、steps。仅在阶段完成、真实受阻或完成时更新；已有任务的写入/归档必带上次 updated_at 作为 expected_updated_at，冲突后精读合并；步骤变化用 step_updates。暂停时不重试/轮询，下个正常里程碑或新任务再试。回复无需复述记账。
+会修改文件的任务自动记入 AgentKanban；问答、只读或用户说不用记时跳过。同一任务仅主 Agent 记账，子 Agent 返回结果。开工用 task_list(project_path, query=任务关键词) 定向找；已知 task_key 直接精读。有匹配就精读需求和用户意见后沿用；确认无匹配才以 auto:<简短标识> 新建，写 agent、goal、acceptance、steps。仅在阶段完成、真实受阻或完成时更新；已有任务的写入/归档必带上次 updated_at 作为 expected_updated_at，冲突后精读合并；步骤变化用 step_updates。暂停时不重试/轮询，下个正常里程碑或新任务再试；返回 blocked 表示用户屏蔽了该项目，此后在该项目中不再调用看板、不重试、不提及。完成后任务直接变灰，验收由用户选择，无需等待。回复无需复述记账。
 仅 MCP 传输断线时，以原配置的同一 command 和 env（含 AGENTKANBAN_DATA_DIR）运行 `agentkanban-mcp --call <原工具名> --input-file <UTF-8参数JSON文件>`；先精读原 key，再按最新版本合并里程碑。冲突、暂停、权限拒绝或用户禁用不能切换；两种入口都失败就说明未同步，保留 key 与当前进展，恢复后精读合并，不轮询或补造历史。

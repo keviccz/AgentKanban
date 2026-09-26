@@ -13,7 +13,8 @@ use std::{
 
 const RULE: &str = include_str!("../../examples/codex-AGENTS-snippet.md");
 /// Earlier rule texts pasted without markers; setup replaces them in place.
-const LEGACY_RULES: [&str; 3] = [
+const LEGACY_RULES: [&str; 4] = [
+    include_str!("legacy-rule-v05.md"),
     include_str!("legacy-rule-v04.md"),
     "## AgentKanban\n会修改文件的任务无需用户要求即自动记录到 AgentKanban（MCP 工具 task_list / task_upsert）：开工先 task_list(project_path) 查摘要，沿用相符 task_key，否则 task_upsert 新建 auto:<简短标识>，agent 填自己的名称，写 goal（做什么）、acceptance（用户怎么验收）和 steps 计划（更新时保留已完成的步骤）；摘要带 has_user_note 时先按 task_key 读取用户补充并照做；之后只在某步完成、真实受阻或全部完成时更新，不为单次修改或命令更新。问答、只读审查、用户说不用记时不记。回复里不必提看板操作。",
     "## AgentKanban\n会修改文件的任务无需用户要求即自动记录到 AgentKanban（MCP 工具 task_list / task_upsert）：开工先 task_list(project_path) 查摘要，沿用相符 task_key，否则 task_upsert 新建 auto:<简短标识>，写 goal（做什么）、acceptance（用户怎么验收）和 steps 计划；摘要带 has_user_note 时先按 task_key 读取用户补充并照做；之后只在某步完成、真实受阻或全部完成时更新，不为单次修改或命令更新。问答、只读审查、用户说不用记时不记。回复里不必提看板操作。",

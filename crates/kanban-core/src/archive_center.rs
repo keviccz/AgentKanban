@@ -99,7 +99,8 @@ impl Database {
 
     /// Archive every task still on the board for one project, as one user action.
     /// Each task keeps its status, review and reports, and restores individually.
-    pub fn archive_project(&self, project_id: i64) -> Result<usize> {
+    /// Returns the archived task ids so the board can offer an undo.
+    pub fn archive_project(&self, project_id: i64) -> Result<Vec<i64>> {
         if project_id <= 0 {
             return Err(Error::InvalidInput(
                 "project_id must be a positive project identifier".into(),
@@ -107,15 +108,19 @@ impl Database {
         }
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let archived = tx.execute(
-            "UPDATE tasks SET archived=1,updated_at=?1 WHERE project_id=?2 AND archived=0",
-            params![changed_at(None), project_id],
-        )?;
-        if archived > 0 {
+        let ids = tx
+            .prepare("SELECT id FROM tasks WHERE project_id=?1 AND archived=0")?
+            .query_map([project_id], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<i64>, _>>()?;
+        if !ids.is_empty() {
+            tx.execute(
+                "UPDATE tasks SET archived=1,updated_at=?1 WHERE project_id=?2 AND archived=0",
+                params![changed_at(None), project_id],
+            )?;
             tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
         }
         tx.commit()?;
-        Ok(archived)
+        Ok(ids)
     }
 
     /// Restore the existing row as a human action. Project identity, task contents,

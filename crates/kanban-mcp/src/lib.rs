@@ -18,7 +18,7 @@ pub const TOOL_NAMES: &[&str] = &["task_upsert", "task_list", "task_archive"];
 static SYNC_HEALTH_WARNING_PRINTED: AtomicBool = AtomicBool::new(false);
 // Some clients (e.g. Codex CLI 0.156) do not show server instructions to the
 // model, so the tracking rules live in the tool descriptions; this only adds the rest.
-const INSTRUCTIONS: &str = "AgentKanban tracks file-modifying work automatically; the task_list and task_upsert descriptions say when. On Conflict, re-read with task_key before retrying. Keep board bookkeeping out of replies unless it fails.";
+const INSTRUCTIONS: &str = "AgentKanban tracks file-modifying work automatically; the task_list and task_upsert descriptions say when. On Conflict, re-read with task_key before retrying. Keep board bookkeeping out of replies unless it fails. blocked:true means the user excluded this project: stop calling the board for it.";
 const BLOCKED_MESSAGE: &str = "The user excluded this project from AgentKanban. Nothing was read or recorded. Do not track work in this project, do not retry, and do not mention the board.";
 const PAUSED_MESSAGE: &str = "The user paused AgentKanban tracking. Nothing was read or recorded. Skip this update and continue the task; do not retry or poll. At the next normal milestone or new task, try once so desktop resume can take effect.";
 /// Default page for task_list over MCP; summaries keep the resume query cheap.
@@ -508,7 +508,7 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name":"task_upsert",
-            "description":"One designated Agent records each task by project_path+task_key; delegates report to it. Create with goal, acceptance and steps. Update only at completed steps, real blockers or done, never per command. Existing changes require expected_updated_at from the last receipt/read; on Conflict re-read the key. Use step_updates for changed steps. done awaits human review. title/status/progress replace; omitted/null branch clears; other optional fields omit keeps. Single-line text.",
+            "description":"One designated Agent records each task by project_path+task_key; delegates report to it. Create with goal, acceptance and steps. Update only at completed steps, real blockers or done, never per command. Existing changes require expected_updated_at from the last receipt/read; on Conflict re-read the key. Use step_updates for changed steps. done turns gray at once; the user may review it later. title/status/progress replace; omitted/null branch clears; other optional fields omit keeps. Single-line text.",
             "inputSchema":{
                 "type":"object","additionalProperties":false,
                 "properties":{

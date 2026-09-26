@@ -1,4 +1,10 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// Theme colors offered in Settings; the logo keeps the brand teal.
+const ACCENTS: [&str; 8] = ["teal", "blue", "indigo", "purple", "rose", "orange", "green", "graphite"];
+/// Project label colors; "none" is simply the absence of an entry.
+const PROJECT_COLORS: [&str; 8] = ["red", "orange", "yellow", "green", "teal", "blue", "purple", "gray"];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -37,6 +43,12 @@ pub(crate) struct Preferences {
     pub activity_style: String,
     /// An in-progress task counts as advancing for this many minutes after an Agent report.
     pub activity_minutes: u32,
+    /// Also notify when an Agent finishes a task. Off by default: finished work turns gray quietly.
+    pub notify_done: bool,
+    /// Theme color key from ACCENTS.
+    pub accent: String,
+    /// Project id (as text) to label color.
+    pub project_colors: BTreeMap<String, String>,
 }
 
 impl Default for Preferences {
@@ -65,6 +77,9 @@ impl Default for Preferences {
             language: "auto".into(),
             activity_style: "pulse".into(),
             activity_minutes: 30,
+            notify_done: false,
+            accent: "teal".into(),
+            project_colors: BTreeMap::new(),
         }
     }
 }
@@ -97,6 +112,11 @@ impl Preferences {
             || !["pulse", "orbit", "dots", "wave", "shimmer", "flow", "glow", "off"]
                 .contains(&self.activity_style.as_str())
             || ![10, 30, 60].contains(&self.activity_minutes)
+            || !ACCENTS.contains(&self.accent.as_str())
+            || self.project_colors.len() > 500
+            || self.project_colors.iter().any(|(id, color)| {
+                !id.parse::<i64>().is_ok_and(|id| id > 0) || !PROJECT_COLORS.contains(&color.as_str())
+            })
             || ![
                 "all",
                 "attention",

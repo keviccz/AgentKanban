@@ -21,6 +21,7 @@ const SEPARATE_LIMIT: usize = 3;
 enum Need {
     Blocked,
     Input,
+    Done,
 }
 
 impl Need {
@@ -28,8 +29,10 @@ impl Need {
         match (self, english) {
             (Need::Blocked, false) => "受阻",
             (Need::Input, false) => "需要你补充",
+            (Need::Done, false) => "已完成",
             (Need::Blocked, true) => "Blocked",
             (Need::Input, true) => "Needs your input",
+            (Need::Done, true) => "Finished",
         }
     }
 }
@@ -41,12 +44,14 @@ struct Alert {
 }
 
 /// Tasks that currently need the user, keyed by id. Mirrors `needsAttention` in display.ts.
-fn needs(board: &BoardSnapshot) -> HashMap<i64, Alert> {
+/// With `include_done`, finished tasks are tracked too, so a newly finished one notifies.
+fn needs(board: &BoardSnapshot, include_done: bool) -> HashMap<i64, Alert> {
     let mut found = HashMap::new();
     for project in &board.projects {
         for task in &project.tasks {
             let need = match task.status {
-                // Finished work never interrupts; reviewing it is optional.
+                // Finished work only notifies when the user opted in; reviewing it is optional.
+                Status::Done if include_done => Need::Done,
                 Status::Done => continue,
                 Status::Blocked => Need::Blocked,
                 _ if !task.needs_input.is_empty() => Need::Input,
@@ -75,12 +80,19 @@ pub(crate) fn spawn(app: AppHandle) {
         let mut revision = None;
         let mut known: Option<HashMap<i64, Need>> = None;
         let mut archived_at: Option<Instant> = None;
+        let mut notify_done = None;
         loop {
             let state = app.state::<AppState>();
             let preferences = match state.preferences.lock() {
                 Ok(preferences) => preferences.clone(),
                 Err(_) => return,
             };
+            // Turning the option on must not announce every task that is already done.
+            if notify_done != Some(preferences.notify_done) {
+                notify_done = Some(preferences.notify_done);
+                known = None;
+                revision = None;
+            }
             if preferences.auto_archive_days > 0
                 && archived_at.is_none_or(|at| at.elapsed() >= ARCHIVE_EVERY)
             {
@@ -107,7 +119,7 @@ pub(crate) fn spawn(app: AppHandle) {
                     }
                     if let Ok(board) = state.db.board() {
                         revision = Some(current);
-                        let alerts = needs(&board);
+                        let alerts = needs(&board, preferences.notify_done);
                         // The first read only learns the board; startup never replays old items.
                         if let (Some(previous), true) = (&known, preferences.notify) {
                             let fresh: Vec<&Alert> = alerts
