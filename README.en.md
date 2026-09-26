@@ -50,13 +50,14 @@ Everything stays on your machine. It never calls a model API, uploads nothing, a
 
 ```mermaid
 flowchart LR
-    A["Coding agent<br/>Codex · Claude Code · Cursor …"] -- "MCP (stdio)<br/>task_list / task_upsert / task_archive" --> M["agentkanban-mcp"]
-    M --> D[("Local SQLite<br/>%LOCALAPPDATA%\AgentKanban")]
-    D --> B["Desktop board<br/>lives in the tray"]
-    U(["You"]) -- "watch · add notes · sign off" --> B
+    A["Coding agent"] -- "MCP" --> M["agentkanban-mcp"]
+    M --> D[("Local SQLite")]
+    D --> B["Desktop board"]
+    U(["You"]) -- "watch · sign off" --> B
 ```
 
-- Clients start the MCP process on demand, so tasks are recorded even while the board is closed.
+- Agents call three stdio MCP tools: `task_list`, `task_upsert` and `task_archive`. Clients start the MCP process on demand, so tasks are recorded even while the board is closed.
+- Data lives in `%LOCALAPPDATA%\AgentKanban`; the board sits in the tray and reads the latest state when opened.
 - A task is identified by project folder plus `task_key`, so later sessions keep updating the same record.
 - Tracking rules live in the tool descriptions and the client's global instructions. Agents update at milestones, real blockers and completion, never per command.
 

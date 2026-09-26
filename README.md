@@ -50,13 +50,14 @@ Agent 推进，你来验收。
 
 ```mermaid
 flowchart LR
-    A["Coding Agent<br/>Codex · Claude Code · Cursor …"] -- "MCP (stdio)<br/>task_list / task_upsert / task_archive" --> M["agentkanban-mcp"]
-    M --> D[("本地 SQLite<br/>%LOCALAPPDATA%\AgentKanban")]
-    D --> B["桌面浮窗<br/>托盘常驻"]
-    U(["你"]) -- "查看 · 补充意见 · 验收" --> B
+    A["Coding Agent"] -- "MCP" --> M["agentkanban-mcp"]
+    M --> D[("本地 SQLite")]
+    D --> B["桌面浮窗"]
+    U(["你"]) -- "查看 · 验收" --> B
 ```
 
-- MCP 进程由客户端按需启动，浮窗不开也能记录；打开时读取最新状态。
+- Agent 通过 stdio MCP 调用 `task_list` / `task_upsert` / `task_archive` 三个工具；MCP 进程由客户端按需启动，浮窗不开也能记录。
+- 数据保存在本机 `%LOCALAPPDATA%\AgentKanban`，浮窗常驻托盘，打开时读取最新状态。
 - 任务按「项目目录 + task_key」定位，Agent 在后续会话里会继续更新同一条记录。
 - 同步规则写在工具说明和客户端的全局指令文件里，Agent 只在阶段完成、真实受阻或全部完成时更新，不会逐条命令刷屏。
 

@@ -10,6 +10,7 @@ import { ACTIVITY_STYLES, ActivityLabel, ActivityMark, activityLabels } from './
 import { ACCENTS, accentLabels, swatch } from './accent';
 import { Summary } from './Summary';
 import { showCopied } from './copyFeedback';
+import { demo } from './demo';
 import { locale, t } from './i18n';
 import { Icon } from './Icon';
 
@@ -175,7 +176,7 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
   return <Panel title={t("设置")} onClose={onClose} busy={backingUp}>
     <nav className="panel-tabs" aria-label={t("设置分类")}><button aria-pressed={tab === 'desktop'} onClick={() => setTab('desktop')}>{t("桌面")}</button><button aria-pressed={tab === 'integration'} onClick={() => setTab('integration')}>{t("Agent 接入")}</button><button aria-pressed={tab === 'updates'} onClick={() => setTab('updates')}>{t("软件更新")}</button></nav>
     <div className="panel-body">
-      {!native && <p className="hint">{t("浏览器布局预览。系统设置与 MCP 诊断请在桌面版中使用。")}</p>}
+      {!native && !demo && <p className="hint">{t("浏览器布局预览。系统设置与 MCP 诊断请在桌面版中使用。")}</p>}
       {error && <p className="panel-error" role="alert">{error}</p>}
       {saveError && <p className="panel-error" role="alert">{saveError}</p>}
       {tab === 'desktop' ? <>
