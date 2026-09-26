@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Icon } from './Icon';
 import { listArchivedTasks, native, restoreArchivedTask } from './bridge';
 import { labels, type ArchivedTask } from './types';
 import { reviewLabels } from './display';
@@ -69,7 +70,7 @@ export function ArchiveCenter({ onBack, onBusyChange }: { onBack: () => void; on
   function search(value: string) { setNotice(''); void load(0, value.trim()); }
 
   return <div className="panel-body archive-center">
-    <div className="archive-toolbar"><button className="text-button" disabled={restoring !== null} onClick={onBack}>返回设置</button><button className="text-button" disabled={!native || loading !== null || restoring !== null} onClick={() => { setNotice(''); void load(0); }}>刷新列表</button></div>
+    <div className="archive-toolbar"><button className="icon-button" aria-label="返回设置" title="返回设置" disabled={restoring !== null} onClick={onBack}><Icon name="back" /></button><button className={`icon-button ${loading !== null ? 'is-spinning' : ''}`} aria-label="刷新列表" title="刷新列表" disabled={!native || loading !== null || restoring !== null} onClick={() => { setNotice(''); void load(0); }}><Icon name="refresh" /></button></div>
     <p className="hint">恢复到原项目并保留任务状态。这里显示最近变更时间。</p>
     <form className="archive-search" onSubmit={event => { event.preventDefault(); search(draft); }}>
       <label className="form-field"><span>搜索归档</span><input ref={searchInput} type="search" value={draft} maxLength={160} aria-label="搜索归档" placeholder="任务标题、项目或关键词" disabled={!native || restoring !== null} onChange={event => setDraft(event.target.value)} /></label>

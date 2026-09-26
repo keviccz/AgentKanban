@@ -199,7 +199,7 @@ export function TaskDetails({ task, project, preferences, now, draft, onDraftCha
         {changed && <div className="version-notice" role="status"><p>Agent 刚更新了任务，先看一眼上方内容</p><button className="text-button" onClick={() => { setReviewVersion(task.updated_at); if (draft) onDraftChange({ note, expected_updated_at: task.updated_at }); setError(''); setMessage(''); }}>知道了</button></div>}
         {error && <p className="panel-error" role="alert">{error}</p>}
         {message && <p className="connection-ok" role="status">{message}</p>}
-        <div className={`form-actions ${pending ? '' : 'end'}`}>{pending ? <><button className="primary-button" disabled={working || changed} onClick={() => void act('accept')}>验收通过</button><button className="outline-button" disabled={working || changed || !note.trim()} onClick={() => void act('reject')}>退回修改</button></> : <button className="outline-button" disabled={working || changed || note === task.user_note} onClick={() => void act('feedback')}>{working ? '正在保存…' : '保存'}</button>}</div>
+        <div className="form-actions end">{pending ? <><button className="primary-button" disabled={working || changed} onClick={() => void act('accept')}>验收通过</button><button className="outline-button" disabled={working || changed || !note.trim()} onClick={() => void act('reject')}>退回修改</button></> : <button className="outline-button" disabled={working || changed || note === task.user_note} onClick={() => void act('feedback')}>{working ? '正在保存…' : '保存'}</button>}</div>
       </section>}
       {!(pending || task.status !== 'done') && error && <p className="panel-error" role="alert">{error}</p>}
       <AgentReports task={task} now={now} />

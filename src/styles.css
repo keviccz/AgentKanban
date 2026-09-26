@@ -196,7 +196,8 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
 .version-notice p { margin: 0; color: var(--amber); }
 .version-notice .text-button { flex-shrink: 0; }
 .steps { list-style: none; padding: 0; margin: 0; }
-.steps li { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline; font-size: 12px; line-height: 1.6; }
+.steps li { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: start; font-size: 12px; line-height: 20px; }
+.steps .status { line-height: 20px; }
 .steps li + li { margin-top: 6px; }
 .step-title { overflow-wrap: anywhere; }
 .step-done .step-title { color: var(--muted); }
@@ -323,6 +324,26 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
 .archived-state { font-size: 10px; white-space: nowrap; }
 .archived-note { font-size: 11px; color: var(--muted); margin: 4px 7px 8px; }
 
-.refresh-button.is-spinning .icon { animation: spin .7s linear infinite; }
+.is-spinning .icon { animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .refresh-button.is-spinning .icon { animation: none; } }
+
+
+/* Search fields show focus with a quiet border instead of the blue ring. */
+.board-search input:focus-visible, .archive-search input:focus-visible { outline: none; border-color: color-mix(in srgb, var(--text) 35%, var(--line)); }
+.archive-toolbar { padding-top: 6px; margin: 0 -6px; }
+
+/* Motion: short, and only on opacity and transform so it stays on the compositor. */
+button, .task-open, select, input, textarea { transition: background-color .14s ease, color .14s ease, border-color .14s ease, opacity .14s ease; }
+.icon { transition: transform .18s ease; }
+.panel[open] { animation: panel-in .18s cubic-bezier(.2, .8, .2, 1); }
+.panel[open]::backdrop { animation: fade-in .18s ease; }
+.task-menu { animation: menu-in .12s ease-out; transform-origin: top left; }
+.project-content, .completed > .task-list, .archived-list, .board-search, .paused-banner { animation: slide-in .18s ease-out; }
+.task-open:active { transform: scale(.995); }
+@keyframes panel-in { from { opacity: 0; transform: translateY(6px) scale(.985); } }
+@keyframes menu-in { from { opacity: 0; transform: scale(.96); } }
+@keyframes slide-in { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes fade-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after, .panel[open]::backdrop { animation: none !important; transition: none !important; }
+}

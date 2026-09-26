@@ -3,28 +3,11 @@ import { archiveTask, compactWindow, hideWindow, listArchivedTasks, native, onEr
 import { defaults, isTutorialProject, isTutorialTask, labels, type ArchivedTask, type CaptureInput, type Filter, type Preferences, type Project, type Snapshot, type Task, type TaskReceipt } from './types';
 import { awaitsReview, changedAt, inActiveList, isStale, matchesFilter, matchesSearch, needsAttention, normalizeFilter, relativeTime, reviewLabels, stepProgress } from './display';
 import { Settings } from './Panels';
+import { Icon } from './Icon';
 import { CapturePanel, TaskDetails, type FeedbackDraft } from './Workflows';
 
 const filterLabels: Record<Filter, string> = { all: '全部', attention: '等你处理', in_progress: '进行中', recent: '最近变更' };
 const SLOGAN = 'Agent 推进，你来验收。';
-
-type IconName = 'logo' | 'pin' | 'sun' | 'moon' | 'list' | 'search' | 'refresh' | 'minus' | 'close' | 'chevron' | 'branch' | 'expand';
-function Icon({ name, className = '' }: { name: IconName; className?: string }) {
-  const paths: Record<Exclude<IconName, 'logo'>, React.ReactNode> = {
-    pin: <g transform="rotate(35 12 12)"><path d="M9 3h6m-5 0v6l-3 4v2h10v-2l-3-4V3M12 15v6" /></g>,
-    sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></>,
-    moon: <path d="M20.5 14A8.5 8.5 0 0 1 10 3.5 8.5 8.5 0 1 0 20.5 14Z" />,
-    list: <><path d="M8 6h12M8 12h12M8 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" strokeWidth="3" /></>,
-    search: <><circle cx="10" cy="10" r="6" /><path d="m15 15 6 6" /></>,
-    refresh: <><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" /><path d="M4 3.5V8h4.5" /><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16" /><path d="M20 20.5V16h-4.5" /></>,
-    minus: <path d="M5 12h14" />,
-    close: <path d="m6 6 12 12M18 6 6 18" />,
-    chevron: <path d="m9 5 7 7-7 7" />,
-    branch: <><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="5" r="2" /><path d="M6 7v10m0-3c0-6 12 0 12-7" /></>,
-    expand: <path d="m5 9 7 7 7-7" />,
-  };
-  return <svg className={`icon ${className}`} viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{name === 'logo' ? <><rect x="3" y="3" width="7" height="18" rx="1.5" fill="currentColor" stroke="none" /><rect x="13" y="3" width="8" height="18" rx="1.5" fill="currentColor" stroke="none" opacity=".65" /></> : paths[name]}</svg>;
-}
 
 type OpenMenu = (id: number, x: number, y: number) => void;
 
@@ -132,16 +115,14 @@ function ProjectSection({ project, preferences, searching, update, now, busy, on
   const rows = forceExpanded ? project.tasks : active;
   const done = project.tasks.filter(task => task.status === 'done');
   const collapsed = !forceExpanded && preferences.collapsed_projects.includes(project.id);
-  const expanded = forceExpanded || preferences.expanded_projects.includes(project.id);
   const completed = preferences.completed_projects.includes(project.id);
   const pinned = preferences.pinned_projects.includes(project.id);
-  const toggle = (key: 'collapsed_projects' | 'expanded_projects' | 'completed_projects' | 'pinned_projects') => update({ [key]: preferences[key].includes(project.id) ? preferences[key].filter(id => id !== project.id) : [...preferences[key], project.id] });
+  const toggle = (key: 'collapsed_projects' | 'completed_projects' | 'pinned_projects') => update({ [key]: preferences[key].includes(project.id) ? preferences[key].filter(id => id !== project.id) : [...preferences[key], project.id] });
   const heading = <><Icon name="chevron" className={!collapsed ? 'rotated' : ''} /><h2>{project.name}</h2><span className="project-count">{rows.length}</span></>;
   return <section className="project" aria-label={project.name}>
     <div className="project-header">{forceExpanded ? <div className="project-heading project-heading-static" title={`${project.path}\n${recent ? '最近变更' : '搜索'}视图临时展开，原折叠设置保留`}>{heading}</div> : <button className="project-heading" disabled={busy} aria-expanded={!collapsed} title={project.path} onClick={() => toggle('collapsed_projects')}>{heading}</button>}<button className={`icon-button project-pin ${pinned ? 'is-pinned' : ''}`} aria-pressed={pinned} aria-label={`${pinned ? '取消置顶项目' : '置顶项目'}：${project.name}`} title={recent ? '最近变更视图按时间排序，原置顶设置保留' : pinned ? '取消项目置顶' : '将项目排在前面'} disabled={busy || recent} onClick={() => toggle('pinned_projects')}><Icon name="pin" /></button></div>
     {!collapsed && <div className="project-content">
-      <ul className="task-list">{(preferences.concise || expanded ? rows : rows.slice(0, 3)).map(task => <TaskRow key={task.id} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={recent} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>
-      {!forceExpanded && !preferences.concise && active.length > 3 && <button className="disclosure more" disabled={busy} aria-expanded={expanded} onClick={() => toggle('expanded_projects')}>{expanded ? '收起为 3 项' : `展开其余 ${active.length - 3} 项`}<Icon name="chevron" className={expanded ? 'up' : ''} /></button>}
+      <ul className="task-list">{rows.map(task => <TaskRow key={task.id} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={recent} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>
       {!forceExpanded && preferences.filter === 'all' && done.length > 0 && <div className="completed"><button className="disclosure completed-toggle" disabled={busy} aria-expanded={completed} onClick={() => toggle('completed_projects')}><Icon name="chevron" className={completed ? 'rotated' : ''} />已完成 <span>{done.length}</span></button>{completed && <ul className="task-list">{done.map(task => <TaskRow key={task.id} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={false} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>}</div>}
       {native && !forceExpanded && preferences.filter === 'all' && project.archived_count > 0 && <ArchivedGroup project={project} busy={busy} onChanged={onChanged} />}
     </div>}
@@ -304,7 +285,7 @@ export function App() {
 
   useEffect(() => {
     if (!ready || !visible) return;
-    const timer = window.setInterval(() => { void refresh(); setNow(Date.now()); }, 1000);
+    const timer = window.setInterval(() => { void refresh(); setNow(previous => Date.now() - previous >= 30_000 ? Date.now() : previous); }, 1000);
     return () => window.clearInterval(timer);
   }, [ready, visible, refresh]);
 

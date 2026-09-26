@@ -142,8 +142,8 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
       {saveError && <p className="panel-error" role="alert">{saveError}</p>}
       {tab === 'desktop' ? <>
         <section className="settings-section"><h3>外观</h3>
-          <RangeSetting label="字号" value={preferences.font_scale} min={80} max={130} presets={[['小', 85], ['中', 100], ['大', 115]]} disabled={disabled} commit={font_scale => update({ font_scale })} />
           <label className="setting-row"><span>项目排序<small>置顶项目始终在前</small></span><select aria-label="项目排序" value={preferences.project_sort} disabled={disabled} onChange={event => update({ project_sort: event.target.value === 'name' ? 'name' : 'recent' })}><option value="recent">最近有更新的在前</option><option value="name">按名称首字母</option></select></label>
+          <RangeSetting label="字号" value={preferences.font_scale} min={80} max={130} presets={[['小', 85], ['中', 100], ['大', 115]]} disabled={disabled} commit={font_scale => update({ font_scale })} />
           <RangeSetting label="不透明度" value={preferences.opacity} min={50} max={100} presets={[['不透明', 100], ['轻透', 90], ['半透', 75]]} disabled={disabled} commit={opacity => update({ opacity })} />
         </section>
         <section className="settings-section"><h3>随时查看</h3>
