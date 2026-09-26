@@ -2,9 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Theme colors offered in Settings; the logo keeps the brand teal.
-const ACCENTS: [&str; 8] = ["teal", "blue", "indigo", "purple", "rose", "orange", "green", "graphite"];
+const ACCENTS: [&str; 8] = [
+    "teal", "blue", "indigo", "purple", "rose", "orange", "green", "graphite",
+];
 /// Project label colors; "none" is simply the absence of an entry.
-const PROJECT_COLORS: [&str; 8] = ["red", "orange", "yellow", "green", "teal", "blue", "purple", "gray"];
+const PROJECT_COLORS: [&str; 8] = [
+    "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray",
+];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -109,13 +113,16 @@ impl Preferences {
 
     pub fn validate(&self) -> Result<(), String> {
         if !["light", "dark", "system"].contains(&self.theme.as_str())
-            || !["pulse", "orbit", "dots", "wave", "shimmer", "flow", "glow", "off"]
-                .contains(&self.activity_style.as_str())
+            || ![
+                "pulse", "orbit", "dots", "wave", "shimmer", "flow", "glow", "off",
+            ]
+            .contains(&self.activity_style.as_str())
             || ![10, 30, 60].contains(&self.activity_minutes)
             || !ACCENTS.contains(&self.accent.as_str())
             || self.project_colors.len() > 500
             || self.project_colors.iter().any(|(id, color)| {
-                !id.parse::<i64>().is_ok_and(|id| id > 0) || !PROJECT_COLORS.contains(&color.as_str())
+                !id.parse::<i64>().is_ok_and(|id| id > 0)
+                    || !PROJECT_COLORS.contains(&color.as_str())
             })
             || ![
                 "all",

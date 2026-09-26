@@ -177,6 +177,17 @@ fn search_covers_project_and_human_fields_and_treats_sql_wildcards_literally() {
         "status": "todo", "progress": "普通内容"
     })).unwrap();
     fixture.archive(other);
+    // Search the path as stored: temp folders can come back in 8.3 form (RUNNER~1)
+    // while the database keeps the canonical long path.
+    let stored_path = fixture
+        .db
+        .list_archived(ArchiveQuery::default())
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|item| item.task.id == target.id)
+        .unwrap()
+        .project_path;
     for query in [
         "查找标题",
         "key:alpha",
@@ -185,7 +196,7 @@ fn search_covers_project_and_human_fields_and_treats_sql_wildcards_literally() {
         "原始请求检索词",
         "人工补充检索词",
         "归档测试项目",
-        fixture.project.to_str().unwrap(),
+        stored_path.as_str(),
         "100%",
         "20_",
         r"\literal",
@@ -603,7 +614,10 @@ fn archive_project_hides_every_board_task_and_each_restores_on_its_own() {
     // Nothing left to archive: no revision bump, and bad ids are rejected.
     assert!(fixture.db.archive_project(project_id).unwrap().is_empty());
     assert_eq!(fixture.db.revision().unwrap(), revision + 1);
-    assert!(matches!(fixture.db.archive_project(0), Err(Error::InvalidInput(_))));
+    assert!(matches!(
+        fixture.db.archive_project(0),
+        Err(Error::InvalidInput(_))
+    ));
 
     fixture
         .db

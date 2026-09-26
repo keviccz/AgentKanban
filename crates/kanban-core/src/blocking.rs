@@ -54,12 +54,20 @@ impl Database {
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let identity: String = tx
-            .query_row("SELECT identity FROM projects WHERE id=?1", [project_id], |row| row.get(0))
+            .query_row(
+                "SELECT identity FROM projects WHERE id=?1",
+                [project_id],
+                |row| row.get(0),
+            )
             .optional()?
             .ok_or_else(|| Error::InvalidInput("project not found".into()))?;
         let mut identities = parse(
-            tx.query_row("SELECT value FROM settings WHERE key=?1", [BLOCKED_PROJECTS], |row| row.get(0))
-                .optional()?,
+            tx.query_row(
+                "SELECT value FROM settings WHERE key=?1",
+                [BLOCKED_PROJECTS],
+                |row| row.get(0),
+            )
+            .optional()?,
         );
         let present = identities.contains(&identity);
         if present == blocked {
@@ -70,7 +78,8 @@ impl Database {
         } else {
             identities.retain(|item| item != &identity);
         }
-        let value = serde_json::to_string(&identities).map_err(|err| Error::InvalidInput(err.to_string()))?;
+        let value = serde_json::to_string(&identities)
+            .map_err(|err| Error::InvalidInput(err.to_string()))?;
         tx.execute(
             "INSERT INTO settings(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             params![BLOCKED_PROJECTS, value],

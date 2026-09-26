@@ -141,7 +141,10 @@ pub(crate) fn spawn(app: AppHandle) {
 fn notify(app: &AppHandle, fresh: &[&Alert], english: bool) {
     let show = |title: String, body: String| toast(app, &title, &body, english);
     if fresh.len() > SEPARATE_LIMIT {
-        let titles = fresh.iter().map(|alert| alert.title.as_str()).collect::<Vec<_>>();
+        let titles = fresh
+            .iter()
+            .map(|alert| alert.title.as_str())
+            .collect::<Vec<_>>();
         if english {
             show(format!("{} tasks need you", fresh.len()), titles.join(", "));
         } else {
@@ -169,7 +172,14 @@ fn toast(app: &AppHandle, title: &str, body: &str, english: bool) {
         .text1(body)
         .scenario(Scenario::Reminder)
         .sound(Some(Sound::Default))
-        .add_button(if english { "Open board" } else { "打开看板" }, "open")
+        .add_button(
+            if english {
+                "Open board"
+            } else {
+                "打开看板"
+            },
+            "open",
+        )
         .add_button(if english { "Later" } else { "稍后" }, "later")
         .on_activated(move |action| {
             if action.as_deref() != Some("later") {

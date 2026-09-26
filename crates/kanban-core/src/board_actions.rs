@@ -1,8 +1,8 @@
 //! Desktop-only actions: undoing quick board actions, the finished-work summary and
 //! display names for projects. None of these count as Agent activity.
 use crate::{
-    changed_at, read_task, validate_task_id, validate_text, Database, Error, ListedTask,
-    ReviewStatus, Result, Status, TaskReceipt,
+    changed_at, read_task, validate_task_id, validate_text, Database, Error, ListedTask, Result,
+    ReviewStatus, Status, TaskReceipt,
 };
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
@@ -18,7 +18,10 @@ impl Database {
             .optional()?
             .ok_or(Error::TaskNotFound)?;
         crate::check_expected(Some(expected_updated_at), Some(&task))?;
-        if task.archived || task.status != Status::Done || task.review_status != ReviewStatus::Accepted {
+        if task.archived
+            || task.status != Status::Done
+            || task.review_status != ReviewStatus::Accepted
+        {
             return Err(Error::NotReviewable);
         }
         let updated_at = changed_at(Some(&task.updated_at));
@@ -28,16 +31,23 @@ impl Database {
         )?;
         tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
         tx.commit()?;
-        Ok(TaskReceipt { id, status: task.status, updated_at })
+        Ok(TaskReceipt {
+            id,
+            status: task.status,
+            updated_at,
+        })
     }
 
     /// Restore tasks archived moments ago (undo of a project archive). Rows that were
     /// restored or changed in between are skipped.
     pub fn restore_many(&self, ids: &[i64]) -> Result<usize> {
         if ids.len() > 10_000 || ids.iter().any(|id| *id <= 0) {
-            return Err(Error::InvalidInput("ids must be positive task identifiers".into()));
+            return Err(Error::InvalidInput(
+                "ids must be positive task identifiers".into(),
+            ));
         }
-        let list = serde_json::to_string(ids).map_err(|err| Error::InvalidInput(err.to_string()))?;
+        let list =
+            serde_json::to_string(ids).map_err(|err| Error::InvalidInput(err.to_string()))?;
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let restored = tx.execute(
@@ -78,7 +88,9 @@ impl Database {
     /// keep reaching the same project; later reports do not rename it back.
     pub fn rename_project(&self, project_id: i64, name: &str) -> Result<()> {
         if project_id <= 0 {
-            return Err(Error::InvalidInput("project_id must be a positive project identifier".into()));
+            return Err(Error::InvalidInput(
+                "project_id must be a positive project identifier".into(),
+            ));
         }
         let name = name.trim();
         validate_text("name", name, 1, 80)?;
@@ -93,7 +105,9 @@ impl Database {
         )?;
         if changed == 0 {
             let exists: Option<i64> = tx
-                .query_row("SELECT id FROM projects WHERE id=?1", [project_id], |row| row.get(0))
+                .query_row("SELECT id FROM projects WHERE id=?1", [project_id], |row| {
+                    row.get(0)
+                })
                 .optional()?;
             if exists.is_none() {
                 return Err(Error::InvalidInput("project not found".into()));

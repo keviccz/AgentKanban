@@ -35,7 +35,13 @@ fn blocked_projects_leave_the_board_and_come_back_when_unblocked() {
     db.set_project_blocked(project_id, true).unwrap();
     assert_eq!(db.revision().unwrap(), revision + 1);
 
-    let names: Vec<String> = db.board().unwrap().projects.into_iter().map(|p| p.name).collect();
+    let names: Vec<String> = db
+        .board()
+        .unwrap()
+        .projects
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
     assert_eq!(names, ["正常项目"]);
     assert!(db.is_path_blocked(blocked_path).unwrap());
     assert!(!db.is_path_blocked(open.to_str().unwrap()).unwrap());

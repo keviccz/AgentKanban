@@ -77,13 +77,16 @@ impl Database {
              LIMIT ?2 OFFSET ?3",
         )?;
         let mut items = statement
-            .query_map(params![query, input.limit + 1, input.offset, input.project_id], |row| {
-                Ok(ListedTask {
-                    task: read_task(row)?,
-                    project_name: row.get("project_name")?,
-                    project_path: row.get("project_path")?,
-                })
-            })?
+            .query_map(
+                params![query, input.limit + 1, input.offset, input.project_id],
+                |row| {
+                    Ok(ListedTask {
+                        task: read_task(row)?,
+                        project_name: row.get("project_name")?,
+                        project_path: row.get("project_path")?,
+                    })
+                },
+            )?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let has_more = items.len() > input.limit as usize;
         items.truncate(input.limit as usize);

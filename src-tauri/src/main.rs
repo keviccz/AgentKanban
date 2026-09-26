@@ -172,7 +172,11 @@ fn archive_task(state: State<AppState>, input: ArchiveById) -> Result<TaskReceip
 /// Folder picker for the new-task panel. It only returns a path; creating the task
 /// still validates that the directory exists.
 #[tauri::command(async)]
-fn pick_project_folder(window: WebviewWindow, title: String, start: Option<String>) -> Option<String> {
+fn pick_project_folder(
+    window: WebviewWindow,
+    title: String,
+    start: Option<String>,
+) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
     let mut dialog = window.dialog().file().set_title(title).set_parent(&window);
     if let Some(start) = start.filter(|path| std::path::Path::new(path).is_dir()) {
@@ -185,12 +189,21 @@ fn pick_project_folder(window: WebviewWindow, title: String, start: Option<Strin
 }
 
 #[tauri::command(async)]
-fn set_project_blocked(state: State<AppState>, project_id: i64, blocked: bool) -> Result<(), String> {
-    state.db.set_project_blocked(project_id, blocked).map_err(error)
+fn set_project_blocked(
+    state: State<AppState>,
+    project_id: i64,
+    blocked: bool,
+) -> Result<(), String> {
+    state
+        .db
+        .set_project_blocked(project_id, blocked)
+        .map_err(error)
 }
 
 #[tauri::command(async)]
-fn get_blocked_projects(state: State<AppState>) -> Result<Vec<kanban_core::BlockedProject>, String> {
+fn get_blocked_projects(
+    state: State<AppState>,
+) -> Result<Vec<kanban_core::BlockedProject>, String> {
     state.db.blocked_projects().map_err(error)
 }
 
@@ -205,12 +218,22 @@ fn restore_tasks(state: State<AppState>, ids: Vec<i64>) -> Result<usize, String>
 }
 
 #[tauri::command(async)]
-fn undo_accept(state: State<AppState>, id: i64, expected_updated_at: String) -> Result<TaskReceipt, String> {
-    state.db.undo_accept(id, &expected_updated_at).map_err(error)
+fn undo_accept(
+    state: State<AppState>,
+    id: i64,
+    expected_updated_at: String,
+) -> Result<TaskReceipt, String> {
+    state
+        .db
+        .undo_accept(id, &expected_updated_at)
+        .map_err(error)
 }
 
 #[tauri::command(async)]
-fn get_finished_since(state: State<AppState>, since: String) -> Result<Vec<kanban_core::ListedTask>, String> {
+fn get_finished_since(
+    state: State<AppState>,
+    since: String,
+) -> Result<Vec<kanban_core::ListedTask>, String> {
     state.db.finished_since(&since).map_err(error)
 }
 
@@ -326,21 +349,51 @@ fn set_preferences(
 const TRAY_ID: &str = "main";
 
 fn tray_tooltip(english: bool) -> &'static str {
-    if english { "AgentKanban · updated by your Agents" } else { "AgentKanban · 由 Agent 更新" }
+    if english {
+        "AgentKanban · updated by your Agents"
+    } else {
+        "AgentKanban · 由 Agent 更新"
+    }
 }
 
 fn tray_menu(app: &tauri::AppHandle, english: bool) -> tauri::Result<Menu<tauri::Wry>> {
     let text = |zh: &'static str, en: &'static str| if english { en } else { zh };
-    let show = MenuItem::with_id(app, "show", text("显示看板", "Show board"), true, None::<&str>)?;
-    let create = MenuItem::with_id(app, "new_task", text("新建任务", "New task"), true, None::<&str>)?;
-    let hide = MenuItem::with_id(app, "hide", text("隐藏看板", "Hide board"), true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", text("退出 AgentKanban", "Quit AgentKanban"), true, None::<&str>)?;
+    let show = MenuItem::with_id(
+        app,
+        "show",
+        text("显示看板", "Show board"),
+        true,
+        None::<&str>,
+    )?;
+    let create = MenuItem::with_id(
+        app,
+        "new_task",
+        text("新建任务", "New task"),
+        true,
+        None::<&str>,
+    )?;
+    let hide = MenuItem::with_id(
+        app,
+        "hide",
+        text("隐藏看板", "Hide board"),
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(
+        app,
+        "quit",
+        text("退出 AgentKanban", "Quit AgentKanban"),
+        true,
+        None::<&str>,
+    )?;
     Menu::with_items(app, &[&show, &create, &hide, &quit])
 }
 
 /// A language switch in Settings takes effect in the tray without a restart.
 fn relabel_tray(app: &tauri::AppHandle, english: bool) {
-    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
     if let Ok(menu) = tray_menu(app, english) {
         let _ = tray.set_menu(Some(menu));
     }
@@ -851,7 +904,12 @@ fn run() -> tauri::Result<()> {
                 }
             }
 
-            let english = app.state::<AppState>().preferences.lock().map_err(error)?.english();
+            let english = app
+                .state::<AppState>()
+                .preferences
+                .lock()
+                .map_err(error)?
+                .english();
             let menu = tray_menu(app.handle(), english)?;
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().ok_or("missing app icon")?.clone())

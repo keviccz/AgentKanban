@@ -878,7 +878,10 @@ fn blocked_projects_are_skipped_without_reading_or_recording() {
     }))
     .unwrap();
     let project_id = db
-        .list(kanban_core::ListTasks { task_key: Some("blocked:first".into()), ..Default::default() })
+        .list(kanban_core::ListTasks {
+            task_key: Some("blocked:first".into()),
+            ..Default::default()
+        })
         .unwrap()
         .items[0]
         .task
@@ -886,21 +889,40 @@ fn blocked_projects_are_skipped_without_reading_or_recording() {
     db.set_project_blocked(project_id, true).unwrap();
 
     for (tool, arguments) in [
-        ("task_upsert", json!({"project_path": path, "task_key": "blocked:second", "title": "t", "status": "todo", "progress": "p"})),
+        (
+            "task_upsert",
+            json!({"project_path": path, "task_key": "blocked:second", "title": "t", "status": "todo", "progress": "p"}),
+        ),
         ("task_list", json!({"project_path": path})),
-        ("task_archive", json!({"project_path": path, "task_key": "blocked:first", "expected_updated_at": created["updated_at"]})),
+        (
+            "task_archive",
+            json!({"project_path": path, "task_key": "blocked:first", "expected_updated_at": created["updated_at"]}),
+        ),
     ] {
         let result = agentkanban_mcp::execute_tool(&db, tool, arguments).unwrap();
         assert_eq!(result["blocked"], true, "{tool}");
         assert_eq!(result["recorded"], false, "{tool}");
     }
     let keys: Vec<String> = db
-        .list(kanban_core::ListTasks { include_done: true, include_archived: true, ..Default::default() })
+        .list(kanban_core::ListTasks {
+            include_done: true,
+            include_archived: true,
+            ..Default::default()
+        })
         .unwrap()
         .items
         .into_iter()
         .map(|item| item.task.task_key)
         .collect();
     assert_eq!(keys, ["blocked:first"]);
-    assert!(!db.list(kanban_core::ListTasks { task_key: Some("blocked:first".into()), ..Default::default() }).unwrap().items[0].task.archived);
+    assert!(
+        !db.list(kanban_core::ListTasks {
+            task_key: Some("blocked:first".into()),
+            ..Default::default()
+        })
+        .unwrap()
+        .items[0]
+            .task
+            .archived
+    );
 }
