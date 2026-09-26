@@ -1,13 +1,15 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { demo, demoPreferences, demoSnapshot } from './demo';
 import { defaults, type CaptureInput, type ClientStatus, type TaskReport, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt, type UpdateStatus, type SyncHealth, type ArchiveQuery, type ArchivePage, type ArchivedTask, type BlockedProject } from './types';
 
 export const native = isTauri();
-// Browser mode is only a layout preview. It never creates sample tasks or pretends to save them.
-export const readSnapshot = (): Promise<Snapshot> => native ? invoke('get_snapshot') : Promise.resolve({ revision: 0, projects: [] });
-export const readRevision = (): Promise<number> => native ? invoke('get_revision') : Promise.resolve(0);
-export const readPreferences = (): Promise<Preferences> => native ? invoke('get_preferences') : Promise.resolve(defaults);
+// Browser mode is only a layout preview. It never saves anything; with ?demo it shows a
+// fixed sample board for screenshots (see demo.ts).
+export const readSnapshot = (): Promise<Snapshot> => native ? invoke('get_snapshot') : Promise.resolve(demo ? demoSnapshot : { revision: 0, projects: [] });
+export const readRevision = (): Promise<number> => native ? invoke('get_revision') : Promise.resolve(demo ? demoSnapshot.revision : 0);
+export const readPreferences = (): Promise<Preferences> => native ? invoke('get_preferences') : Promise.resolve(demo ? demoPreferences() : defaults);
 export const savePreferences = (preferences: Preferences): Promise<Preferences> => native ? invoke('set_preferences', { preferences }) : Promise.resolve(preferences);
 export const compactWindow = (compact: boolean): Promise<Preferences> => invoke('set_compact', { compact });
 export const hideWindow = (): Promise<void> => invoke('hide_window');
