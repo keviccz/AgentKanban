@@ -150,6 +150,8 @@ fn search_covers_project_and_human_fields_and_treats_sql_wildcards_literally() {
             task_key: "KEY:Alpha".into(),
             title: "初始标题".into(),
             request: "原始请求检索词".into(),
+            personal: false,
+            later: false,
         })
         .unwrap();
     let updated = fixture
@@ -322,6 +324,8 @@ fn restoration_preserves_every_task_field_review_state_and_report() {
                 task_key: key.into(),
                 title: "用户需求".into(),
                 request: "保留需求\n第二行".into(),
+                personal: false,
+                later: false,
             })
             .unwrap();
         let mut update = json!({

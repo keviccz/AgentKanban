@@ -23,6 +23,9 @@ pub use sync_health::{SyncEvent, SyncHealth, SyncOutcome, SyncTool, SyncTranspor
 pub type Result<T> = std::result::Result<T, Error>;
 
 const TRACKING_PAUSED: &str = "tracking_paused";
+/// Owns personal todos without a directory. Real projects are always `git:` or
+/// `dir:` identities, so no Agent project_path can resolve to it.
+pub(crate) const PERSONAL_IDENTITY: &str = "agentkanban:personal:v1";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -172,6 +175,9 @@ pub struct Task {
     /// How the user can check the result; shown next to the review buttons.
     #[serde(default)]
     pub acceptance: Vec<String>,
+    /// A todo the user does alone. MCP never lists, changes or archives it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub personal: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,6 +189,9 @@ pub struct ProjectBoard {
     /// Archived tasks of this project; the GUI loads them on demand.
     #[serde(default)]
     pub archived_count: u32,
+    /// The built-in group for personal todos that belong to no directory.
+    #[serde(default)]
+    pub personal: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,10 +268,16 @@ pub struct UpsertTask {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureTask {
+    /// May be empty for a personal todo; it then joins the built-in personal group.
     pub project_path: String,
     pub task_key: String,
     pub title: String,
     pub request: String,
+    #[serde(default)]
+    pub personal: bool,
+    /// Personal only: note it for later (to do) instead of starting it now.
+    #[serde(default)]
+    pub later: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -488,7 +503,7 @@ impl Database {
         }
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 5 {
+        if version > 6 {
             return Err(Error::NewerSchema(version));
         }
         if version == 0 {
@@ -559,6 +574,13 @@ impl Database {
                  PRAGMA user_version=5;",
             )?;
         }
+        if version <= 5 {
+            tx.execute_batch(
+                "ALTER TABLE tasks ADD COLUMN owner TEXT NOT NULL DEFAULT 'agent'
+                   CHECK(owner IN ('agent','user'));
+                 PRAGMA user_version=6;",
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -607,9 +629,11 @@ impl Database {
     }
 
     pub fn last_task_update(&self) -> Result<Option<String>> {
-        Ok(self
-            .connect()?
-            .query_row("SELECT MAX(updated_at) FROM tasks", [], |row| row.get(0))?)
+        Ok(self.connect()?.query_row(
+            "SELECT MAX(updated_at) FROM tasks WHERE owner='agent'",
+            [],
+            |row| row.get(0),
+        )?)
     }
 
     pub fn board(&self) -> Result<BoardSnapshot> {
@@ -624,20 +648,22 @@ impl Database {
         {
             let mut statement = tx.prepare(
                 "SELECT id,name,path,
-                   (SELECT COUNT(*) FROM tasks a WHERE a.project_id=p.id AND a.archived=1)
+                   (SELECT COUNT(*) FROM tasks a WHERE a.project_id=p.id AND a.archived=1),
+                   identity=?1
                  FROM projects p
                  WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.archived=0)
                    AND p.identity NOT IN (SELECT value FROM json_each(
                      COALESCE((SELECT value FROM settings WHERE key='blocked_projects'),'[]')))
                  ORDER BY name COLLATE NOCASE,id",
             )?;
-            let rows = statement.query_map([], |row| {
+            let rows = statement.query_map([PERSONAL_IDENTITY], |row| {
                 Ok(ProjectBoard {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     path: row.get(2)?,
                     tasks: Vec::new(),
                     archived_count: row.get(3)?,
+                    personal: row.get(4)?,
                 })
             })?;
             for row in rows {
@@ -732,6 +758,12 @@ impl Database {
                 read_task,
             )
             .optional()?;
+        if existing.as_ref().is_some_and(|task| task.personal) {
+            // Personal todos are invisible to Agents; do not reveal what the key holds.
+            return Err(Error::InvalidInput(
+                "task_key is reserved in this project; choose another key".into(),
+            ));
+        }
         check_expected(input.expected_updated_at.as_deref(), existing.as_ref())?;
         let agent = match &input.agent {
             Some(agent) if agent.is_empty() => None,
@@ -920,7 +952,7 @@ impl Database {
         let mut statement = conn.prepare(
             "SELECT t.*,p.name AS project_name,p.path AS project_path
              FROM tasks t JOIN projects p ON t.project_id=p.id
-             WHERE (?1 IS NULL OR p.identity=?1)
+             WHERE t.owner='agent' AND (?1 IS NULL OR p.identity=?1)
                AND (?2 IS NULL OR t.status=?2)
                AND (?3 OR t.status!='done')
                AND (?4 OR t.archived=0)
@@ -977,7 +1009,7 @@ impl Database {
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let task = tx.query_row(
-            "SELECT t.* FROM tasks t JOIN projects p ON t.project_id=p.id WHERE p.identity=?1 AND t.task_key=?2",
+            "SELECT t.* FROM tasks t JOIN projects p ON t.project_id=p.id WHERE p.identity=?1 AND t.task_key=?2 AND t.owner='agent'",
             params![project.identity, input.task_key], read_task
         ).optional()?.ok_or(Error::TaskNotFound)?;
         check_expected(input.expected_updated_at.as_deref(), Some(&task))?;
@@ -1035,7 +1067,15 @@ impl Database {
         validate_text("task_key", &input.task_key, 1, 160)?;
         validate_text("title", &input.title, 1, 200)?;
         validate_multiline("request", &input.request, 0, 2000)?;
-        let project = self.resolve_task_project(&input.project_path)?;
+        let project = if input.personal && input.project_path.is_empty() {
+            ProjectIdentity {
+                identity: PERSONAL_IDENTITY.into(),
+                name: "我的待办".into(),
+                path: String::new(),
+            }
+        } else {
+            self.resolve_task_project(&input.project_path)?
+        };
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute("INSERT INTO projects(identity,name,path) VALUES (?1,?2,?3) ON CONFLICT(identity) DO NOTHING",
@@ -1056,15 +1096,29 @@ impl Database {
             return Ok(TaskReceipt::from(&task));
         }
         let updated_at = changed_at(None);
+        // A personal todo starts in progress unless the user noted it for later.
+        let (status, progress, owner) = if input.personal {
+            let status = if input.later {
+                Status::Todo
+            } else {
+                Status::InProgress
+            };
+            (status, "", "user")
+        } else {
+            (Status::Todo, "等待 Agent 接手", "agent")
+        };
         tx.execute(
-            "INSERT INTO tasks(project_id,task_key,title,status,progress,updated_at,request)
-            VALUES (?1,?2,?3,'todo','等待 Agent 接手',?4,?5)",
+            "INSERT INTO tasks(project_id,task_key,title,status,progress,updated_at,request,owner)
+            VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             params![
                 project_id,
                 input.task_key,
                 input.title,
+                status.as_str(),
+                progress,
                 updated_at,
-                input.request
+                input.request,
+                owner
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -1072,7 +1126,7 @@ impl Database {
         tx.commit()?;
         Ok(TaskReceipt {
             id,
-            status: Status::Todo,
+            status,
             updated_at,
         })
     }
@@ -1203,7 +1257,8 @@ impl Database {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let archived = tx.execute(
             "UPDATE tasks SET archived=1,updated_at=?1
-             WHERE archived=0 AND status='done' AND review_status IN ('accepted','pending') AND updated_at<?2",
+             WHERE archived=0 AND status='done' AND (review_status IN ('accepted','pending') OR owner='user')
+               AND updated_at<?2",
             params![changed_at(None), cutoff],
         )?;
         if archived > 0 {
@@ -1223,7 +1278,7 @@ impl Database {
                SELECT id FROM (
                  SELECT id,ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY updated_at DESC,id DESC) AS rank
                  FROM tasks
-                 WHERE archived=0 AND status='done' AND review_status IN ('accepted','pending')
+                 WHERE archived=0 AND status='done' AND (review_status IN ('accepted','pending') OR owner='user')
                ) WHERE rank>?2)",
             params![changed_at(None), keep],
         )?;
@@ -1463,5 +1518,6 @@ fn read_task(row: &Row<'_>) -> rusqlite::Result<Task> {
         review_withdrawn_at: row.get("review_withdrawn_at")?,
         goal: row.get("goal")?,
         acceptance,
+        personal: row.get::<_, String>("owner")? == "user",
     })
 }

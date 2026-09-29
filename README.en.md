@@ -36,6 +36,7 @@ Everything stays on your machine. It never calls a model API, uploads nothing, a
 - **See who is moving right now**: tasks with a recent report show a live "Advancing" animation, in seven styles such as pulsing dot, heartbeat and spinning ring.
 - **Interrupts only when it matters**: notifications for blocked tasks and questions only. Finished tasks turn gray; review is optional, with right-click accept or archive and a 6-second undo.
 - **Organized by project**: worktrees of one repository group together. Pin, color-label, rename, archive or block whole projects.
+- **Personal todos**: tick "Only me" to note something you do yourself. Agents cannot see it; right-click "Mark done" when you finish.
 - **Light on context**: 3 MCP tools; a write returns a ~30-token receipt and a search returns 5 summaries by default.
 - **Keyboard friendly**: `Ctrl+Alt+K` to show, `Ctrl+Alt+N` to capture, and ↑↓ / Enter / A / E / `/` on the board.
 - **Looks good your way**: light, dark or system theme, 8 theme colors, Chinese or English UI, adjustable text size and opacity.
@@ -65,7 +66,7 @@ flowchart LR
 ## Quick start
 
 1. **Install**: download `AgentKanban_<version>_x64-setup.exe` from [Releases](https://github.com/keviccz/AgentKanban/releases/latest). It installs per user, no admin rights needed. A portable zip is also available.
-2. **Connect**: open the board → Settings → Agents, and click "Connect" next to your client.
+2. **Connect**: on first launch, click "Connect all" on the card at the top of the board, or connect clients one by one in Settings → Agents.
 3. **Restart the client**, give the agent a small task that edits a file, and watch it appear on the board.
 
 > [!TIP]

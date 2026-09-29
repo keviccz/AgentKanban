@@ -22,6 +22,8 @@ impl Fixture {
             task_key: key.into(),
             title: "用户原始需求".into(),
             request: "保留原始数据\n交付可打开的报告，支持中文。".into(),
+            personal: false,
+            later: false,
         }
     }
 
@@ -108,6 +110,8 @@ fn capture_retries_cannot_overwrite_agent_work_or_resurrect_archived_tasks() {
     let changed_retry = CaptureTask {
         title: "retry must not replace title".into(),
         request: "retry must not replace request".into(),
+        personal: false,
+        later: false,
         ..capture.clone()
     };
     assert_eq!(fixture.db.capture(changed_retry.clone()).unwrap(), first);

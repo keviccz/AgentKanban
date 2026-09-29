@@ -13,16 +13,19 @@ export interface Task {
   agent_updated_at: string | null;
   steps: Step[]; review_withdrawn_at: string | null;
   goal: string; acceptance: string[];
+  /** The user's own todo; Agents never see it. */
+  personal?: boolean;
 }
 /** One task_upsert as the Agent sent it (routing fields removed). */
 export interface TaskReport { reported_at: string; payload: Record<string, unknown> }
 export interface TaskReceipt { id: number; status: Status; updated_at: string }
-export interface CaptureInput { project_path: string; task_key: string; title: string; request: string }
+export interface CaptureInput { project_path: string; task_key: string; title: string; request: string; personal: boolean; later: boolean }
 export interface ArchivedTask extends Task { project_name: string; project_path: string }
 export interface ArchiveQuery { query?: string; project_id?: number; limit?: number; offset?: number }
 export interface ArchivePage { items: ArchivedTask[]; next_offset: number | null }
 export interface BlockedProject { id: number; name: string; path: string }
-export interface Project { id: number; name: string; path: string; tasks: Task[]; archived_count: number }
+/** `personal` marks the built-in group for personal todos without a folder. */
+export interface Project { id: number; name: string; path: string; tasks: Task[]; archived_count: number; personal?: boolean }
 export const isTutorialTask = (project: Pick<Project, 'name'>, task: Pick<Task, 'agent' | 'task_key'>) => project.name === '新手教程'
   && task.agent === '教学示例'
   && (task.task_key === 'tutorial:follow-progress' || task.task_key === 'tutorial:review-delivery');
@@ -40,6 +43,7 @@ export interface Preferences {
   language: 'auto' | 'zh' | 'en';
   activity_style: ActivityStyle; activity_minutes: number;
   notify_done: boolean; accent: Accent; project_colors: Record<string, ProjectColor>;
+  agent_guide_dismissed: boolean;
 }
 export const defaults: Preferences = {
   theme: 'light', always_on_top: true, compact: false, concise: false, filter: 'all',
@@ -51,7 +55,7 @@ export const defaults: Preferences = {
   project_sort: 'recent',
   language: 'auto',
   activity_style: 'pulse', activity_minutes: 30,
-  notify_done: false, accent: 'teal', project_colors: {},
+  notify_done: false, accent: 'teal', project_colors: {}, agent_guide_dismissed: false,
 };
 export interface IntegrationInfo {
   app_version: string; mcp_path: string; mcp_exists: boolean; database_path: string;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { archiveTask, createTask, pickProjectFolder, native, openExternalLink, readHandoff, readTaskReports, reviewTask, sendFeedback } from './bridge';
-import { awaitsReview, isStale, relativeTime, reviewLabels, stepProgress } from './display';
+import { archiveTask, createTask, pickProjectFolder, native, openExternalLink, readHandoff, readTaskReports, reviewTask, sendFeedback, setPersonalStatus } from './bridge';
+import { awaitsReview, isStale, isWaiting, personalLabels, personalMoveLabels, personalMoves, personalMoveTarget, projectLabel, type PersonalMove, relativeTime, reviewLabels, stepProgress } from './display';
 import { CopyButton, Panel } from './Panels';
 import { isTutorialProject, isTutorialTask, labels, type CaptureInput, type Deliverable, type Preferences, type Project, type Status, type Step, type Task, type TaskReceipt, type TaskReport } from './types';
 import { locale, t } from './i18n';
@@ -19,7 +19,9 @@ export function CapturePanel({ draft, projects, onChange, onCreated, onClose }: 
     if (inFlight.current || !native) return;
     inFlight.current = true; setWorking(true); setError('');
     try {
-      const receipt = await createTask({ ...draft, title: draft.title.trim(), project_path: draft.project_path.trim() });
+      // Personal keys get their own prefix, so they never look like a capture an Agent could take over.
+      const task_key = draft.personal ? draft.task_key.replace(/^capture:/, 'me:') : draft.task_key;
+      const receipt = await createTask({ ...draft, task_key, title: draft.title.trim(), project_path: draft.project_path.trim() });
       await onCreated(receipt);
     } catch (e) { setError(t("创建失败：{0}", String(e))); }
     finally { inFlight.current = false; setWorking(false); }
@@ -29,14 +31,16 @@ export function CapturePanel({ draft, projects, onChange, onCreated, onClose }: 
       if (event.ctrlKey && event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.requestSubmit(); }
     }}>
       <fieldset disabled={working}>
-      <p className="hint">{t("先记下要做的事，再把开工说明交给 Agent。")}</p>
-      <label className="form-field">{t("任务标题")}<input ref={titleInput} required maxLength={200} value={draft.title} onChange={event => onChange({ ...draft, title: event.target.value })} placeholder={t("例如：补齐导出功能的边界情况")} /></label>
-      <ProjectPathField value={draft.project_path} projects={projects.filter(project => !isTutorialProject(project))} onChange={project_path => onChange({ ...draft, project_path })} />
-      <p className="field-hint">{t("使用本机已有目录；同一仓库的 worktree 会归入同一项目。")}</p>
-      <label className="form-field">{t("需求与完成标准")} <span className="optional">{t("可选")}</span><textarea aria-label={t("需求与完成标准")} maxLength={2000} rows={5} value={draft.request} onChange={event => onChange({ ...draft, request: event.target.value })} placeholder={t("要达到什么效果？有什么限制？如何确认完成？")} /></label>
+      <p className="hint">{draft.personal ? t("自己要做的事，只记在看板上；Agent 看不到，也不会接手。") : t("先记下要做的事，再把开工说明交给 Agent。")}</p>
+      <label className="form-field">{t("任务标题")}<input ref={titleInput} required maxLength={200} value={draft.title} onChange={event => onChange({ ...draft, title: event.target.value })} placeholder={draft.personal ? t("例如：回复评审邮件") : t("例如：补齐导出功能的边界情况")} /></label>
+      <label className="setting-row personal-toggle"><span>{t("仅自己")}<small>{t("Agent 看不到这条待办，做完后由你标记完成")}</small></span><input type="checkbox" checked={draft.personal} onChange={event => onChange({ ...draft, personal: event.target.checked })} /></label>
+      {draft.personal && <label className="setting-row sub-setting personal-toggle"><span>{t("稍后再做")}<small>{t("先记为待办，开始做时再右键「开始做」")}</small></span><input type="checkbox" checked={draft.later} onChange={event => onChange({ ...draft, later: event.target.checked })} /></label>}
+      <ProjectPathField value={draft.project_path} optional={draft.personal} projects={projects.filter(project => !isTutorialProject(project) && !project.personal)} onChange={project_path => onChange({ ...draft, project_path })} />
+      <p className="field-hint">{draft.personal ? t("留空则放入「我的待办」；选择项目则显示在该项目里。") : t("使用本机已有目录；同一仓库的 worktree 会归入同一项目。")}</p>
+      <label className="form-field">{draft.personal ? t("备注") : t("需求与完成标准")} <span className="optional">{t("可选")}</span><textarea aria-label={draft.personal ? t("备注") : t("需求与完成标准")} maxLength={2000} rows={draft.personal ? 3 : 5} value={draft.request} onChange={event => onChange({ ...draft, request: event.target.value })} placeholder={draft.personal ? t("需要记住的细节") : t("要达到什么效果？有什么限制？如何确认完成？")} /></label>
       {error && <p className="panel-error" role="alert">{error}</p>}
       {!native && <p className="hint">{t("浏览器只预览布局，创建任务请使用桌面版。")}</p>}
-      <div className="form-actions end"><span className="hint">{t("Ctrl + Enter 保存")}</span><button className="primary-button" type="submit" disabled={!native || working || !draft.title.trim() || !draft.project_path.trim()}>{working ? t("正在保存…") : t("创建待办")}</button></div>
+      <div className="form-actions end"><span className="hint">{t("Ctrl + Enter 保存")}</span><button className="primary-button" type="submit" disabled={!native || working || !draft.title.trim() || (!draft.personal && !draft.project_path.trim())}>{working ? t("正在保存…") : draft.personal ? t("创建个人待办") : t("创建待办")}</button></div>
       <p className="hint capture-note">{t("关闭面板会保留本次未提交的内容，退出程序后不保留。")}</p>
       </fieldset>
     </form>
@@ -44,7 +48,7 @@ export function CapturePanel({ draft, projects, onChange, onCreated, onClose }: 
 }
 
 /** Path input with a styled list of known projects and a native folder picker. */
-function ProjectPathField({ value, projects, onChange }: { value: string; projects: Project[]; onChange: (path: string) => void }) {
+function ProjectPathField({ value, optional, projects, onChange }: { value: string; optional: boolean; projects: Project[]; onChange: (path: string) => void }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const [picking, setPicking] = useState(false);
@@ -65,10 +69,10 @@ function ProjectPathField({ value, projects, onChange }: { value: string; projec
     finally { setPicking(false); }
   }
   return <div className="form-field path-field" ref={field}>
-    <label htmlFor="capture-path">{t("项目目录")}</label>
+    <label htmlFor="capture-path">{t("项目目录")}{optional && <span className="optional">{t("可选")}</span>}</label>
     <div className="path-row">
       <div className={`path-combo ${open ? 'is-open' : ''}`}>
-        <input id="capture-path" required role="combobox" aria-expanded={open} aria-controls="capture-path-list" aria-autocomplete="list" autoComplete="off" value={value} spellCheck={false} placeholder={t("选择已有项目，或输入完整目录路径")}
+        <input id="capture-path" required={!optional} role="combobox" aria-expanded={open} aria-controls="capture-path-list" aria-autocomplete="list" autoComplete="off" value={value} spellCheck={false} placeholder={optional ? t("留空放入「我的待办」") : t("选择已有项目，或输入完整目录路径")}
           onChange={event => { onChange(event.target.value); setOpen(true); setActive(-1); }}
           onKeyDown={event => {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -150,7 +154,55 @@ function AgentReports({ task, now }: { task: Task; now: number }) {
   </details>;
 }
 
-export function TaskDetails({ task, project, preferences, now, draft, onDraftChange, onBusyChange, onChanged, onClose }: {
+/** A personal todo: no Agent fields, no review; the user finishes it. */
+function PersonalDetails({ task, project, now, onBusyChange, onChanged, onClose }: {
+  task: Task; project: Project; now: number;
+  onBusyChange: (busy: boolean) => void; onChanged: () => Promise<void>; onClose: () => void;
+}) {
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState('');
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const moves = personalMoves(task.status);
+  useEffect(() => {
+    if (!confirmArchive) return;
+    const reset = setTimeout(() => setConfirmArchive(false), 4000);
+    return () => clearTimeout(reset);
+  }, [confirmArchive]);
+  async function act(action: PersonalMove | 'archive') {
+    if (working) return;
+    if (action === 'archive' && !confirmArchive) { setConfirmArchive(true); return; }
+    setWorking(true); onBusyChange(true); setError('');
+    try {
+      if (action === 'archive') await archiveTask(task.id, task.updated_at);
+      else await setPersonalStatus(task.id, task.updated_at, personalMoveTarget[action]);
+      await onChanged();
+    } catch (e) { setError(String(e)); await onChanged(); }
+    finally { setWorking(false); onBusyChange(false); setConfirmArchive(false); }
+  }
+  return <Panel title={t("个人待办")} onClose={onClose} busy={working}>
+    <div className="panel-body task-details">
+      <div className="detail-status"><span className={`status ${task.status} personal`}><span className="status-dot" />{t(personalLabels[task.status])}</span>
+        <span className="detail-actions"><button className={`text-button ${confirmArchive ? 'danger' : ''}`} disabled={working} title={t("从看板隐藏，数据保留")} onClick={() => void act('archive')}>{confirmArchive ? t("确认归档？") : t("归档")}</button></span></div>
+      <h3>{task.title}</h3>
+      <div className="agent-attribution"><span>{t("仅自己可见，Agent 看不到")}</span><time dateTime={task.updated_at} title={new Date(task.updated_at).toLocaleString(locale())}>{relativeTime(task.updated_at, now)}</time></div>
+      {task.request && <section className="workflow-section"><h4>{t("备注")}</h4><p>{task.request}</p></section>}
+      {error && <p className="panel-error" role="alert">{error}</p>}
+      <div className="form-actions end">{moves.map((move, index) => <button key={move} className={index === 0 && move !== 'reopen' ? 'primary-button' : 'outline-button'} disabled={working} onClick={() => void act(move)}>{t(personalMoveLabels[move])}</button>)}</div>
+      <details className="task-identifiers"><summary>{t("项目与任务信息")}</summary><dl><dt>{t("项目")}</dt><dd>{projectLabel(project)}</dd>{project.path && <><dt>{t("目录")} <CopyButton text={project.path} /></dt><dd className="mono">{project.path}</dd></>}<dt>{t("最近变更")}</dt><dd>{new Date(task.updated_at).toLocaleString(locale())}</dd></dl></details>
+    </div>
+  </Panel>;
+}
+
+export function TaskDetails(props: {
+  task: Task; project: Project; preferences: Preferences; now: number;
+  draft?: FeedbackDraft; onDraftChange: (draft: FeedbackDraft | null) => void;
+  onBusyChange: (busy: boolean) => void;
+  onChanged: () => Promise<void>; onClose: () => void;
+}) {
+  return props.task.personal ? <PersonalDetails {...props} /> : <AgentTaskDetails {...props} />;
+}
+
+function AgentTaskDetails({ task, project, preferences, now, draft, onDraftChange, onBusyChange, onChanged, onClose }: {
   task: Task; project: Project; preferences: Preferences; now: number;
   draft?: FeedbackDraft; onDraftChange: (draft: FeedbackDraft | null) => void;
   onBusyChange: (busy: boolean) => void;
@@ -178,6 +230,7 @@ export function TaskDetails({ task, project, preferences, now, draft, onDraftCha
     if (pending && !draft) setNote('');
   }
   const steps = stepProgress(task);
+  const waiting = !tutorial && isWaiting(task, preferences.stale_after_hours, now);
   useEffect(() => {
     if (!confirmArchive) return;
     const reset = setTimeout(() => setConfirmArchive(false), 4000);
@@ -217,13 +270,13 @@ export function TaskDetails({ task, project, preferences, now, draft, onDraftCha
 
   return <Panel title={t("任务详情")} onClose={onClose} busy={working}>
     <div className="panel-body task-details">
-      <div className="detail-status"><span className={`status ${task.status}`}><span className="status-dot" />{t(labels[task.status])}</span>{task.review_status !== 'none' && <span className={`review-badge ${task.review_status}`}>{t(reviewLabels[task.review_status])}</span>}
+      <div className="detail-status"><span className={`status ${task.status}`}><span className="status-dot" />{waiting ? t("待继续") : t(labels[task.status])}</span>{task.review_status !== 'none' && <span className={`review-badge ${task.review_status}`}>{t(reviewLabels[task.review_status])}</span>}
         <span className="detail-actions">{!tutorial && handoff && <CopyButton text={handoff} label={t("交给 Agent")} copied={t("已复制，粘贴到 Agent 会话")} title={t("复制一段提示词，粘贴到任意已接入的 Agent 会话，它会接着做这个任务并更新这条记录")} onFailure={() => setHandoffOpen(true)} />}<button className={`text-button ${confirmArchive ? 'danger' : ''}`} disabled={working || changed} title={t("从看板隐藏，数据保留")} onClick={() => void act('archive')}>{confirmArchive ? t("确认归档？") : t("归档")}</button></span></div>
       <h3>{task.title}</h3>
       {tutorial && <p className="hint tutorial-notice">{t("教学示例：可体验补充、验收通过或退回修改。真实工作请从“新建”选择实际项目目录开始；示例用完可归档。")}</p>}
       <p className="detail-progress">{task.progress || t("尚未补充进展")}</p>
       <div className="agent-attribution"><span>{tutorial ? t("教学示例") : task.agent ? t("{0} · 最后上报", task.agent) : task.agent_updated_at ? t("Agent 最后上报") : t("等待 Agent 接手")}</span><time dateTime={task.agent_updated_at ?? task.updated_at} title={`${tutorial ? t("示例记录时间：") : ''}${new Date(task.agent_updated_at ?? task.updated_at).toLocaleString(locale())}`}>{relativeTime(task.agent_updated_at ?? task.updated_at, now)}</time></div>
-      {!tutorial && isStale(task, preferences.stale_after_hours, now) && <p className="hint stale">{t("较久未收到 Agent 更新")}</p>}
+      {!tutorial && isStale(task, preferences.stale_after_hours, now) && <p className="hint stale">{waiting ? t("超过 {0} 小时没有 Agent 上报，需要有人接着做；可复制开工说明交给 Agent", preferences.stale_after_hours) : t("较久未收到 Agent 更新")}</p>}
       {task.review_withdrawn_at && <p className="hint withdrawn-notice">{t("Agent 在你验收前重新打开了任务")}</p>}
       {!tutorial && handoffError && <p className="panel-error" role="alert">{handoffError} <button className="text-button" onClick={() => setHandoffAttempt(attempt => attempt + 1)}>{t("重试")}</button></p>}
       {!tutorial && handoff && <details className="handoff-content" open={handoffOpen} onToggle={event => setHandoffOpen(event.currentTarget.open)}><summary>{t("查看开工说明")}</summary><pre className="guidance" tabIndex={0}>{handoff}</pre></details>}

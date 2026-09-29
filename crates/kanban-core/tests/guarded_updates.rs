@@ -196,6 +196,8 @@ fn keyword_search_matches_handoff_fields_and_treats_like_metacharacters_literall
             task_key: "feature:lookup".into(),
             title: "查找标题".into(),
             request: "原始约束百分比 50%_\\ 禁止覆盖".into(),
+            personal: false,
+            later: false,
         })
         .unwrap();
     fixture

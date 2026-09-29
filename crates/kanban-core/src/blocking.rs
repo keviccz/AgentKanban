@@ -61,6 +61,11 @@ impl Database {
             )
             .optional()?
             .ok_or_else(|| Error::InvalidInput("project not found".into()))?;
+        if identity == crate::PERSONAL_IDENTITY {
+            return Err(Error::InvalidInput(
+                "the personal group has no Agent to block".into(),
+            ));
+        }
         let mut identities = parse(
             tx.query_row(
                 "SELECT value FROM settings WHERE key=?1",

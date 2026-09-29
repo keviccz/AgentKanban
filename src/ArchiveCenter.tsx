@@ -57,7 +57,7 @@ export function ArchiveCenter({ onBack, onBusyChange }: { onBack: () => void; on
       await restoreArchivedTask(task.id, task.updated_at);
       if (!mounted.current) return;
       const completed = task.status === 'done' && task.review_status !== 'pending';
-      setNotice(t("“{0}”已恢复到原项目“{1}”。{2}", task.title, task.project_name, completed ? t("可在该项目的“已完成”分组查看。") : t("返回看板后可查看，任务状态保持不变。")));
+      setNotice(t("“{0}”已恢复到原项目“{1}”。{2}", task.title, task.project_path ? task.project_name : t("我的待办"), completed ? t("可在该项目的“已完成”分组查看。") : t("返回看板后可查看，任务状态保持不变。")));
       setItems(previous => previous.filter(item => item.id !== task.id));
       // Restoring shifts offset pages; start again to avoid skipping an archived task.
       void load(0);
@@ -86,7 +86,7 @@ export function ArchiveCenter({ onBack, onBusyChange }: { onBack: () => void; on
       {loaded && !loading && items.length === 0 && <p className="archive-empty">{query ? t("没有匹配的归档任务。") : t("暂无归档任务。")}</p>}
       <ul className="archive-list" aria-label={t("归档任务")} aria-busy={loading !== null}>
         {items.map(task => <li key={task.id} className="archive-task">
-          <div className="archive-project"><span>{task.project_name}</span><small title={task.project_path}>{task.project_path}</small></div>
+          <div className="archive-project"><span>{task.project_path ? task.project_name : t("我的待办")}</span><small title={task.project_path}>{task.project_path}</small></div>
           <h3>{task.title}</h3>
           <p className="archive-state">{t("原状态：")}<span className={task.status}>{t(labels[task.status])}</span>{t(reviewLabels[task.review_status]) && ` · ${t(reviewLabels[task.review_status])}`}</p>
           {task.progress && <p className="archive-progress" title={task.progress}>{task.progress}</p>}

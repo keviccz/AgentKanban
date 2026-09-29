@@ -53,6 +53,8 @@ pub(crate) struct Preferences {
     pub accent: String,
     /// Project id (as text) to label color.
     pub project_colors: BTreeMap<String, String>,
+    /// The board's "connect your Agent" card was closed; setup stays in Settings.
+    pub agent_guide_dismissed: bool,
 }
 
 impl Default for Preferences {
@@ -83,6 +85,7 @@ impl Default for Preferences {
             activity_minutes: 30,
             notify_done: false,
             accent: "teal".into(),
+            agent_guide_dismissed: false,
             project_colors: BTreeMap::new(),
         }
     }

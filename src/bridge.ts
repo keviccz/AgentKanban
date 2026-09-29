@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { demo, demoPreferences, demoSnapshot } from './demo';
-import { defaults, type CaptureInput, type ClientStatus, type TaskReport, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt, type UpdateStatus, type SyncHealth, type ArchiveQuery, type ArchivePage, type ArchivedTask, type BlockedProject } from './types';
+import { defaults, type Status, type CaptureInput, type ClientStatus, type TaskReport, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences, type Snapshot, type TaskReceipt, type UpdateStatus, type SyncHealth, type ArchiveQuery, type ArchivePage, type ArchivedTask, type BlockedProject } from './types';
 
 export const native = isTauri();
 // Browser mode is only a layout preview. It never saves anything; with ?demo it shows a
@@ -46,6 +46,7 @@ export function dragWindow(event: { button: number; target: EventTarget | null; 
 }
 export const archiveProject = (projectId: number): Promise<number[]> => invoke('archive_project', { projectId });
 export const restoreTasks = (ids: number[]): Promise<number> => invoke('restore_tasks', { ids });
+export const setPersonalStatus = (id: number, expectedUpdatedAt: string, status: Status): Promise<TaskReceipt> => invoke('set_personal_status', { id, expectedUpdatedAt, status });
 export const undoAccept = (id: number, expectedUpdatedAt: string): Promise<TaskReceipt> => invoke('undo_accept', { id, expectedUpdatedAt });
 export const readFinishedSince = (since: string): Promise<ArchivedTask[]> => invoke('get_finished_since', { since });
 export const renameProject = (projectId: number, name: string): Promise<void> => invoke('rename_project', { projectId, name });

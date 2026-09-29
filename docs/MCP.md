@@ -4,7 +4,7 @@ AgentKanban 提供一个独立的本地 stdio MCP 程序 `agentkanban-mcp.exe`�
 
 ## 从浮窗接入
 
-设置 →「Agent 接入」展示 MCP 可执行文件和数据库的实际位置，并可一键接入 Codex、Claude Code、DeepSeek Harness、Cursor、OpenCode、Antigravity、Hermes：写入含实际路径的 MCP 配置和自动记录规则，首次修改的文件先备份为 `.agentkanban.bak`（写入位置见 README）。无法自动合并时展开「手动配置」复制片段。安装位置或免安装包位置变化后，重新点一次接入即可；静态示例中的默认路径不会自动跟随移动。
+设置 →「Agent 接入」展示 MCP 可执行文件和数据库的实际位置，并可一键接入 Codex、Claude Code、DeepSeek Harness、Cursor、OpenCode、Antigravity、Hermes：写入含实际路径的 MCP 配置和自动记录规则，首次修改的文件先备份为 `.agentkanban.bak`（写入位置见 README）。「接入全部」依次接入所有已检测到、尚未配置好的客户端，一个失败不影响其他。首次打开的看板顶部卡片提供同样的入口。无法自动合并时展开「手动配置」复制片段。安装位置或免安装包位置变化后，重新点一次接入即可；静态示例中的默认路径不会自动跟随移动。
 
 本地自检用于确认本机 MCP 可执行文件能启动并完成协议响应。**自检通过只证明本地 MCP 可用，不证明 Codex、Claude Code 或 Cursor 已连接。** 完成配置后，仍需到目标客户端检查工具加载，并让真实 Agent 查询或更新一次任务。只读取配置、复制配置或检查语法，都不能代替这一步。
 
@@ -125,6 +125,8 @@ claude mcp add --transport stdio --scope user agentkanban -- "$env:LOCALAPPDATA\
 用户在浮窗右键项目选择「屏蔽项目」后，带该项目 `project_path` 的调用返回成功结果 `{"blocked":true,"recorded":false,"message":...}`，不读写任务。Agent 此后在该项目中不再调用看板、不重试、不提及；这不是传输故障，不能触发备用入口。屏蔽列表每次调用都检查，用户在设置 → Agent 接入取消屏蔽后立即恢复。
 
 用户可在浮窗任务详情中归档任务（二次确认，数据保留，不计为 Agent 更新），通过设置中的归档中心搜索并恢复。GUI 恢复要求当前版本，保留任务身份、验收结果、用户意见与上报记录，不刷新 Agent 的活动时间。Agent 也可调用 `task_archive(archived=false)` 恢复；三个工具的接口保持不变。
+
+用户在浮窗里勾选「仅自己」创建的个人待办不属于 Agent：三个工具都把它们当作不存在，列表、搜索和精确 key 查询都不返回；对同一 key 调用 `task_upsert` 会被拒绝并提示换一个 key，`task_archive` 返回任务不存在。个人待办使用 `me:` 前缀，正常的 `auto:` 等 key 不会撞上。
 
 新任务直接设为 `done`，或从其他状态转为 `done`，会进入 `pending`。在用户验收前 Agent 又把任务改为其他状态时，待验收被取消并记录 `review_withdrawn_at`。用户在浮窗中通过验收后成为 `accepted`；退回修改必须填写意见，任务变为 `todo` 与 `changes_requested`，重新进入默认未完成查询。Agent 继续执行时保留修改请求，下一次完成重新等待验收。已通过的完成任务被 Agent 实质修改后也需重新验收。
 

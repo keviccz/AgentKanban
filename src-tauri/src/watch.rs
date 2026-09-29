@@ -48,7 +48,8 @@ struct Alert {
 fn needs(board: &BoardSnapshot, include_done: bool) -> HashMap<i64, Alert> {
     let mut found = HashMap::new();
     for project in &board.projects {
-        for task in &project.tasks {
+        // Personal todos are the user's own; finishing one is not news.
+        for task in project.tasks.iter().filter(|task| !task.personal) {
             let need = match task.status {
                 // Finished work only notifies when the user opted in; reviewing it is optional.
                 Status::Done if include_done => Need::Done,

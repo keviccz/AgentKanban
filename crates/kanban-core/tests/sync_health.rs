@@ -28,7 +28,7 @@ fn empty_health_is_read_only_and_pause_is_always_current() {
         .unwrap()
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(schema, 5);
+    assert_eq!(schema, 6);
 }
 
 #[test]

@@ -1,4 +1,4 @@
-import type { Filter, Project, Task } from './types';
+import type { Filter, Project, Status, Task } from './types';
 import { t } from './i18n';
 
 export function relativeTime(timestamp: string, now: number) {
@@ -11,13 +11,28 @@ export function relativeTime(timestamp: string, now: number) {
 }
 
 export function isStale(task: Task, hours: number, now: number) {
-  return hours > 0 && (task.status === 'in_progress' || task.status === 'blocked')
+  return hours > 0 && !task.personal && (task.status === 'in_progress' || task.status === 'blocked')
     && now - Date.parse(task.agent_updated_at ?? task.updated_at) >= hours * 3_600_000;
 }
+
+/** In progress on paper, but no Agent report within the stale window: someone needs to pick it up again. */
+export const isWaiting = (task: Task, hours: number, now: number) => task.status === 'in_progress' && !task.personal
+  && hours > 0 && now - Date.parse(task.agent_updated_at ?? task.updated_at) >= hours * 3_600_000;
 
 // The board has no live connection to an Agent; a recent report on an in-progress task is the best signal.
 export const isAdvancing = (task: Task, minutes: number, now: number) => task.status === 'in_progress'
   && task.agent_updated_at !== null && now - Date.parse(task.agent_updated_at) < minutes * 60_000;
+
+/** The built-in personal group is stored under a fixed name; show it in the interface language. */
+export const projectLabel = (project: Pick<Project, 'name' | 'personal'>) => project.personal ? t("我的待办") : project.name;
+
+/** Personal todos: to do, in progress (the user is on it) or done; the user moves them. */
+export const personalLabels: Record<Status, string> = { todo: '待办', in_progress: '我在做', blocked: '受阻', done: '已完成' };
+export type PersonalMove = 'start' | 'pause' | 'finish' | 'reopen';
+export const personalMoveTarget: Record<PersonalMove, Status> = { start: 'in_progress', pause: 'todo', finish: 'done', reopen: 'in_progress' };
+export const personalMoveLabels: Record<PersonalMove, string> = { start: '开始做', pause: '放回待办', finish: '标记完成', reopen: '重新打开' };
+export const personalMoveDone: Record<PersonalMove, string> = { start: '已开始：{0}', pause: '已放回待办：{0}', finish: '已完成：{0}', reopen: '已重新打开：{0}' };
+export const personalMoves = (status: Status): PersonalMove[] => status === 'todo' ? ['start', 'finish'] : status === 'in_progress' ? ['finish', 'pause'] : status === 'done' ? ['reopen'] : [];
 
 export const awaitsReview = (task: Task) => task.status === 'done' && task.review_status === 'pending';
 // Done means finished: an unreviewed delivery turns grey with the rest, and reviewing it is optional.

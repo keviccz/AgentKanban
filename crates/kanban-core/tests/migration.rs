@@ -39,7 +39,7 @@ fn v1_migration_preserves_tasks_settings_and_legacy_done_review_boundary() {
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        5
+        6
     );
     assert_eq!(db.revision().unwrap(), 17);
     assert_eq!(

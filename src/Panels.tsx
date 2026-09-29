@@ -30,7 +30,7 @@ export function Panel({ title, children, onClose, initialFocus, busy = false }: 
     onClose();
   }
   return <dialog ref={dialog} className="panel" aria-label={title} onCancel={event => { event.preventDefault(); close(); }}>
-    <div className="panel-heading" onMouseDown={dragWindow}><h2>{title}</h2><button className="text-button" autoFocus={!initialFocus} disabled={busy} title={t("返回看板（Esc）")} onClick={event => close(event.detail > 0)}>{t("返回")}</button></div>
+    <div className="panel-heading" onMouseDown={dragWindow}><h2>{title}</h2><button className="icon-button panel-close" autoFocus={!initialFocus} disabled={busy} aria-label={t("返回看板")} title={t("返回看板（Esc）")} onClick={event => close(event.detail > 0)}><Icon name="close" /></button></div>
     {children}
   </dialog>;
 }
@@ -79,7 +79,23 @@ export function CopyButton({ text, label = t("复制"), copied = t("已复制"),
   return <span className="copy-control"><button type="button" className="text-button" title={title} onClick={event => void copy(event.clientX, event.clientY)}>{label}</button><span className={`copy-result ${message?.ok ? 'sr-only' : ''}`} role="status">{message?.text}</span></span>;
 }
 
-const connected = (client: ClientStatus) => client.mcp === 'ok' && client.rules !== false;
+export const connected = (client: ClientStatus) => client.mcp === 'ok' && client.rules !== false;
+/** Installed clients that one click would still change. */
+export const pendingClients = (clients: ClientStatus[]) => clients.filter(client => client.detected && !connected(client));
+export interface ConnectAllResult { done: ClientStatus[]; failed: { client: ClientStatus; error: string }[] }
+/** One client after another, so a failure never leaves the others half-written. */
+export async function connectAll(clients: ClientStatus[]): Promise<ConnectAllResult> {
+  const result: ConnectAllResult = { done: [], failed: [] };
+  for (const client of pendingClients(clients)) {
+    try { result.done.push(await setupClient(client.id)); }
+    catch (e) { result.failed.push({ client, error: String(e) }); }
+  }
+  return result;
+}
+export const connectAllMessage = ({ done, failed }: ConnectAllResult) => [
+  done.length ? t("已接入 {0}，重启这些客户端后生效。", done.map(client => client.name).join(t("、"))) : '',
+  ...failed.map(({ client, error }) => t("{0} 接入失败：{1}", client.name, error)),
+].filter(Boolean).join(' ');
 const clientState = (client: ClientStatus) => connected(client) ? t("已配置")
   : client.mcp === 'outdated' ? t("配置待更新")
   : client.mcp === 'unreadable' ? t("配置无法解析")
@@ -100,8 +116,8 @@ function RangeSetting({ label, value, min, max, presets, unit = '%', disabled, c
 }
 const PRIMARY_CLIENTS = ['codex', 'claude', 'dsh'];
 
-export function Settings({ preferences, busy, disabled, saveError, update, onShortcutChanged, onBoardChanged, onClose }: { preferences: Preferences; busy: boolean; disabled: boolean; saveError: string; update: (patch: Partial<Preferences>) => void; onShortcutChanged: () => void; onBoardChanged: () => void; onClose: () => void }) {
-  const [tab, setTab] = useState<'desktop' | 'integration' | 'updates'>('desktop');
+export function Settings({ preferences, busy, disabled, saveError, initialTab = 'desktop', manualClient, update, onShortcutChanged, onBoardChanged, onClose }: { preferences: Preferences; busy: boolean; disabled: boolean; saveError: string; initialTab?: 'desktop' | 'integration'; manualClient?: string; update: (patch: Partial<Preferences>) => void; onShortcutChanged: () => void; onBoardChanged: () => void; onClose: () => void }) {
+  const [tab, setTab] = useState<'desktop' | 'integration' | 'updates'>(initialTab);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const summaryEntry = useRef<HTMLButtonElement>(null);
@@ -110,10 +126,12 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
   const [desktop, setDesktop] = useState<DesktopSettings | null>(null);
   const [info, setInfo] = useState<IntegrationInfo | null>(null);
   const [clients, setClients] = useState<ClientStatus[]>([]);
-  const [manualId, setManualId] = useState('codex');
+  const [manualId, setManualId] = useState(manualClient ?? 'codex');
   const [allClients, setAllClients] = useState(false);
   const [settingUp, setSettingUp] = useState('');
   const [setupResult, setSetupResult] = useState<Outcome>(null);
+  // Connect-all can succeed for some clients and fail for others; the successes get their own line.
+  const [setupDone, setSetupDone] = useState('');
   const [backup, setBackup] = useState<Outcome>(null);
   const [backingUp, setBackingUp] = useState(false);
   const backupInFlight = useRef(false);
@@ -134,6 +152,10 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
     setWorking(false);
   }
   useEffect(() => { void reload(); }, []);
+  // Opened from the board's guide after a failed setup: bring that client's manual snippet into view.
+  const manualSection = useRef<HTMLDetailsElement>(null);
+  const clientsLoaded = clients.length > 0;
+  useEffect(() => { if (manualClient && clientsLoaded) manualSection.current?.scrollIntoView({ block: 'nearest' }); }, [manualClient, clientsLoaded]);
 
   async function toggle(kind: 'autostart' | 'shortcut', enabled: boolean) {
     setWorking(true); setError('');
@@ -150,13 +172,24 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
     finally { setChecking(false); }
   }
   async function connect(client: ClientStatus) {
-    setSettingUp(client.id); setSetupResult(null);
+    setSettingUp(client.id); setSetupResult(null); setSetupDone('');
     try {
       const next = await setupClient(client.id);
       setClients(list => list.map(item => item.id === next.id ? next : item));
       setSetupResult({ ok: true, text: t("{0} 已配置，重启该客户端后再验证工具是否可用。", next.name) });
     } catch (e) { setSetupResult({ ok: false, text: String(e) }); setManualId(client.id); }
     finally { setSettingUp(''); }
+  }
+  async function connectEvery() {
+    setSettingUp('all'); setSetupResult(null); setSetupDone('');
+    try {
+      const result = await connectAll(clients);
+      const updated = new Map(result.done.map(client => [client.id, client]));
+      setClients(list => list.map(item => updated.get(item.id) ?? item));
+      if (result.done.length) setSetupDone(connectAllMessage({ done: result.done, failed: [] }));
+      if (result.failed.length) setSetupResult({ ok: false, text: connectAllMessage({ done: [], failed: result.failed }) });
+      if (result.failed.length) setManualId(result.failed[0].client.id);
+    } finally { setSettingUp(''); }
   }
   async function runBackup() {
     if (backupInFlight.current) return;
@@ -203,7 +236,7 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
         <section className="settings-section"><h3>{t("提醒")}</h3>
           <label className="setting-row"><span>{t("需要我处理时通知")}<small>{t("受阻或需要你补充")}</small></span><input type="checkbox" checked={preferences.notify} disabled={disabled} onChange={event => update({ notify: event.target.checked })} /></label>
           <label className="setting-row"><span>{t("Agent 完成任务时通知")}<small>{t("默认关闭；完成的任务会直接变灰")}</small></span><input type="checkbox" checked={preferences.notify_done} disabled={disabled} onChange={event => update({ notify_done: event.target.checked })} /></label>
-          <label className="setting-row"><span>{t("多久未更新时提示")}</span><select aria-label={t("久未更新阈值")} value={preferences.stale_after_hours} disabled={disabled} onChange={event => update({ stale_after_hours: Number(event.target.value) })}>{[0, 1, 4, 8, 24, 48, 168].map(hours => <option key={hours} value={hours}>{hours ? hours === 168 ? t("7 天") : t("{0} 小时", hours) : t("关闭")}</option>)}</select></label>
+          <label className="setting-row"><span>{t("多久没上报算「待继续」")}<small>{t("进行中的任务超过这个时间没有 Agent 上报，显示为「待继续」，不计入「进行中」；受阻任务显示「较久未更新」")}</small></span><select aria-label={t("久未更新阈值")} value={preferences.stale_after_hours} disabled={disabled} onChange={event => update({ stale_after_hours: Number(event.target.value) })}>{[0, 1, 4, 8, 24, 48, 168].map(hours => <option key={hours} value={hours}>{hours ? hours === 168 ? t("7 天") : t("{0} 小时", hours) : t("关闭")}</option>)}</select></label>
         </section>
         <section className="settings-section"><h3>{t("整理")}</h3>
           <label className="setting-row"><span>{t("已完成任务自动归档")}</span><select aria-label={t("自动归档")} value={preferences.auto_archive_days} disabled={disabled} onChange={event => update({ auto_archive_days: Number(event.target.value) })}>{[0, 1, 3, 7, 30].map(days => <option key={days} value={days}>{days ? t("{0} 天后", days) : t("关闭")}</option>)}</select></label>
@@ -222,16 +255,17 @@ export function Settings({ preferences, busy, disabled, saveError, update, onSho
             {check && <p role="status" className={check.ok ? 'connection-ok' : 'panel-error'}>{check.message}</p>}
           </> : <p className="hint">{native ? working ? t("正在读取…") : t("诊断信息不可用，请重试。") : t("需要桌面版读取实际路径。")}</p>}
         </section>
-        <section className="settings-section"><h3>{t("接入客户端")}</h3>
+        <section className="settings-section"><div className="section-heading"><h3>{t("接入客户端")}</h3>{pendingClients(clients).length > 0 && <button className="text-button" disabled={Boolean(settingUp)} title={t("接入本机已检测到、尚未配置好的客户端：{0}", pendingClients(clients).map(client => client.name).join(t("、")))} onClick={() => void connectEvery()}>{settingUp === 'all' ? t("正在接入…") : t("接入全部（{0}）", pendingClients(clients).length)}</button>}</div>
           <p className="hint">{t("一键写入 MCP 配置和自动记录规则，原文件先备份。")}</p>
           <ul className="client-list">{(allClients ? [...primary, ...others] : primary).map(client => <li key={client.id} className={client.detected ? '' : 'client-absent'}>
             <span className="client-name" title={client.config_path}>{client.name}</span>
             <span className={`client-state ${connected(client) ? 'ok' : ''}`}>{clientState(client)}</span>
-            <button className="text-button" disabled={Boolean(settingUp)} onClick={() => void connect(client)}>{settingUp === client.id ? t("正在接入…") : connected(client) ? t("重新接入") : t("一键接入")}</button>
+            <button className="text-button" disabled={Boolean(settingUp)} onClick={() => void connect(client)}>{settingUp === client.id || (settingUp === 'all' && pendingClients(clients).includes(client)) ? t("正在接入…") : connected(client) ? t("重新接入") : t("一键接入")}</button>
           </li>)}</ul>
           {others.length > 0 && <button className="text-button" onClick={() => setAllClients(value => !value)}>{allClients ? t("收起") : t("查看更多")}</button>}
+          {setupDone && <p role="status" className="connection-ok">{setupDone}</p>}
           {setupResult && <p role="status" className={setupResult.ok ? 'connection-ok' : 'panel-error'}>{setupResult.text}</p>}
-          {manual && <details className="manual-setup"><summary>{t("手动配置")}</summary>
+          {manual && <details ref={manualSection} className="manual-setup" open={manualClient ? true : undefined}><summary>{t("手动配置")}</summary>
             <label className="setting-row"><span>{t("客户端")}</span><select aria-label={t("手动配置的客户端")} value={manualId} onChange={event => setManualId(event.target.value)}>{clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
             <p className="hint mono">{manual.config_path}</p>
             <pre className="config-code" tabIndex={0}>{manual.manual}</pre>

@@ -230,6 +230,19 @@ fn undo_accept(
 }
 
 #[tauri::command(async)]
+fn set_personal_status(
+    state: State<AppState>,
+    id: i64,
+    expected_updated_at: String,
+    status: kanban_core::Status,
+) -> Result<TaskReceipt, String> {
+    state
+        .db
+        .set_personal_status(id, &expected_updated_at, status)
+        .map_err(error)
+}
+
+#[tauri::command(async)]
 fn get_finished_since(
     state: State<AppState>,
     since: String,
@@ -1007,6 +1020,7 @@ fn run() -> tauri::Result<()> {
             archive_project,
             restore_tasks,
             undo_accept,
+            set_personal_status,
             get_finished_since,
             rename_project,
             set_project_blocked,

@@ -125,6 +125,8 @@ fn existing_or_archived_real_work_is_never_given_tutorial_tasks() {
                 task_key: "real:keep".into(),
                 title: "保留真实任务".into(),
                 request: "已有用户数据".into(),
+                personal: false,
+                later: false,
             })
             .unwrap();
         if archived {
@@ -368,6 +370,8 @@ fn summary_paths_support_exact_queries_and_normal_archive_restore_without_reiden
             task_key: "real:outside-tutorial".into(),
             title: "真实项目不受教程影响".into(),
             request: "".into(),
+            personal: false,
+            later: false,
         })
         .unwrap();
     let real = db

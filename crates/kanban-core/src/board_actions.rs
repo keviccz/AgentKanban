@@ -38,6 +38,53 @@ impl Database {
         })
     }
 
+    /// Move a personal todo between to do, in progress and done. Agent tasks keep
+    /// their own status flow and cannot be changed from the board.
+    pub fn set_personal_status(
+        &self,
+        id: i64,
+        expected_updated_at: &str,
+        status: Status,
+    ) -> Result<TaskReceipt> {
+        validate_task_id(id)?;
+        validate_text("expected_updated_at", expected_updated_at, 1, 64)?;
+        if status == Status::Blocked {
+            return Err(Error::InvalidInput(
+                "a personal todo is to do, in progress or done".into(),
+            ));
+        }
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = tx
+            .query_row("SELECT * FROM tasks WHERE id=?1", [id], read_task)
+            .optional()?
+            .ok_or(Error::TaskNotFound)?;
+        if !task.personal {
+            return Err(Error::InvalidInput(
+                "only a personal todo can change status from the board".into(),
+            ));
+        }
+        if task.archived {
+            return Err(Error::TaskArchived);
+        }
+        crate::check_expected(Some(expected_updated_at), Some(&task))?;
+        if task.status == status {
+            return Ok(TaskReceipt::from(&task));
+        }
+        let updated_at = changed_at(Some(&task.updated_at));
+        tx.execute(
+            "UPDATE tasks SET status=?1,updated_at=?2 WHERE id=?3",
+            params![status.as_str(), updated_at, id],
+        )?;
+        tx.execute("UPDATE metadata SET value=value+1 WHERE key='revision'", [])?;
+        tx.commit()?;
+        Ok(TaskReceipt {
+            id,
+            status,
+            updated_at,
+        })
+    }
+
     /// Restore tasks archived moments ago (undo of a project archive). Rows that were
     /// restored or changed in between are skipped.
     pub fn restore_many(&self, ids: &[i64]) -> Result<usize> {
@@ -70,7 +117,7 @@ impl Database {
         let mut statement = conn.prepare(
             "SELECT t.*,p.name AS project_name,p.path AS project_path
              FROM tasks t JOIN projects p ON t.project_id=p.id
-             WHERE t.status='done' AND COALESCE(t.agent_updated_at,t.updated_at)>=?1
+             WHERE t.owner='agent' AND t.status='done' AND COALESCE(t.agent_updated_at,t.updated_at)>=?1
              ORDER BY p.name COLLATE NOCASE,p.id,COALESCE(t.agent_updated_at,t.updated_at) DESC,t.id DESC
              LIMIT 500",
         )?;

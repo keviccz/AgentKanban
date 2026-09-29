@@ -719,6 +719,8 @@ fn targeted_summaries_flag_hidden_requirements_and_keep_full_text_in_exact_reads
             task_key: "user:keyword".into(),
             title: "用户任务".into(),
             request: "需求中的 50%_\\ 特殊词".into(),
+            personal: false,
+            later: false,
         })
         .unwrap();
     let mut server = Server::new(db.clone());

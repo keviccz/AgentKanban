@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { archiveProject, archiveTask, compactWindow, dragWindow, renameProject, restoreTasks, setProjectBlocked, undoAccept, hideWindow, listArchivedTasks, native, onError, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, readTrackingPaused, readWindowVisible, restoreArchivedTask, reviewTask, savePreferences, setTrackingPaused } from './bridge';
-import { defaults, isTutorialProject, isTutorialTask, labels, type ArchivedTask, type CaptureInput, type Filter, type Preferences, type Project, type Snapshot, type Task, type TaskReceipt } from './types';
-import { awaitsReview, changedAt, inActiveList, isAdvancing, isStale, matchesFilter, matchesSearch, needsAttention, normalizeFilter, relativeTime, reviewLabels, stepProgress } from './display';
+import { archiveProject, archiveTask, compactWindow, dragWindow, renameProject, restoreTasks, setPersonalStatus, setProjectBlocked, undoAccept, hideWindow, listArchivedTasks, native, readClients, onError, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, readTrackingPaused, readWindowVisible, restoreArchivedTask, reviewTask, savePreferences, setTrackingPaused } from './bridge';
+import { defaults, isTutorialProject, isTutorialTask, labels, type ArchivedTask, type CaptureInput, type ClientStatus, type Filter, type Preferences, type Project, type Snapshot, type Task, type TaskReceipt } from './types';
+import { awaitsReview, changedAt, inActiveList, isAdvancing, isStale, isWaiting, matchesFilter, matchesSearch, needsAttention, normalizeFilter, personalLabels, personalMoveDone, personalMoveLabels, personalMoves, personalMoveTarget, projectLabel, relativeTime, type PersonalMove, reviewLabels, stepProgress } from './display';
 import { Settings } from './Panels';
+import { AgentGuide } from './AgentGuide';
 import { Icon } from './Icon';
 import { demo } from './demo';
 import { ActivityLabel, ActivityMark } from './Activity';
@@ -16,24 +17,28 @@ const SLOGAN = 'Agent 推进，你来验收。';
 type OpenMenu = (id: number, x: number, y: number) => void;
 
 // `language` is only a memo key: rows must re-render when the interface language changes.
-const TaskRow = memo(function TaskRow({ task, tutorial, concise, recent, now, staleHours, advancing, onOpen, onMenu }: { language: Language; advancing: boolean; task: Task; tutorial: boolean; concise: boolean; recent: boolean; now: number; staleHours: number; onOpen: (id: number) => void; onMenu: OpenMenu }) {
+const TaskRow = memo(function TaskRow({ task, index, tutorial, concise, recent, now, staleHours, advancing, waiting, activityMinutes, onOpen, onMenu }: { language: Language; index?: number; advancing: boolean; waiting: boolean; activityMinutes: number; task: Task; tutorial: boolean; concise: boolean; recent: boolean; now: number; staleHours: number; onOpen: (id: number) => void; onMenu: OpenMenu }) {
   const timestamp = recent ? task.updated_at : task.agent_updated_at ?? task.updated_at;
   const timeTitle = t("{0}：{1}", recent ? t("最近变更") : !tutorial && task.agent_updated_at ? t("Agent 最后上报") : t("记录时间"), new Date(timestamp).toLocaleString(locale()));
   const pending = awaitsReview(task);
   const steps = concise ? '' : stepProgress(task);
-  const statusLabel = concise && pending ? t("未验收") : concise && task.review_status === 'accepted' ? t("已验收") : t(labels[task.status]);
-  return <li data-task-id={task.id} className={`task task-${task.status} ${concise ? 'task-concise' : ''} ${recent ? 'task-recent' : ''} ${advancing ? 'task-advancing' : ''}`} onContextMenu={event => {
+  // In progress without a recent report: the chosen activity style, held still.
+  // 待继续 keeps the same held-still look; only the word changes.
+  const idle = !advancing && !task.personal && task.status === 'in_progress';
+  const statusLabel = task.personal ? t(personalLabels[task.status]) : waiting ? t("待继续") : concise && pending ? t("未验收") : concise && task.review_status === 'accepted' ? t("已验收") : t(labels[task.status]);
+  const statusTitle = advancing ? t("Agent 最近有上报，正在推进") : idle && waiting ? t("Agent 最后上报于 {0}，超过 {1} 小时没有动静", new Date(task.agent_updated_at ?? task.updated_at).toLocaleString(locale()), staleHours) : idle ? t("{0} 分钟内没有 Agent 上报，动效暂停", activityMinutes) : task.personal ? t("仅自己可见，Agent 看不到") : undefined;
+  return <li data-task-id={task.id} className={`task task-${task.status} ${concise ? 'task-concise' : ''} ${recent ? 'task-recent' : ''} ${advancing ? 'task-advancing' : ''} ${idle ? 'task-idle' : ''} ${task.personal ? 'task-personal' : ''}`} onContextMenu={event => {
     event.preventDefault();
     // The keyboard menu key reports no pointer position; anchor to the row instead.
     const box = event.currentTarget.getBoundingClientRect();
     onMenu(task.id, event.clientX || box.left + 24, event.clientY || box.top + 24);
   }}>
     <button className="task-open" aria-label={t("查看任务：{0}", task.title)} title={pending ? t("Agent 已完成，你尚未验收。右键可一键验收或归档") : undefined} onClick={() => onOpen(task.id)}>
-      <span className="task-heading"><span className="task-title" title={recent ? `${task.title}\n${timeTitle}` : task.title}>{task.title}</span><span className={`status ${task.status} ${concise && pending ? 'review-pending' : ''} ${advancing ? 'advancing' : ''}`} title={advancing ? t("Agent 最近有上报，正在推进") : undefined}><span className="status-dot" />{advancing ? <ActivityLabel /> : statusLabel}{advancing && <ActivityMark />}</span></span>
+      <span className="task-heading">{index !== undefined && <span className="task-index" aria-hidden="true">{index}</span>}<span className="task-title" title={recent ? `${task.title}\n${timeTitle}` : task.title}>{task.title}</span><span className={`status ${task.status} ${concise && pending ? 'review-pending' : ''} ${advancing ? 'advancing' : idle ? 'idle' : ''} ${task.personal ? 'personal' : ''}`} title={statusTitle}><span className="status-dot" />{advancing ? <ActivityLabel /> : statusLabel}{(advancing || idle) && <ActivityMark />}</span></span>
       {!concise && <>
-      <span className="progress" title={task.progress}>{task.progress || t("尚未补充进展")}</span>
+      {task.personal ? task.request && <span className="progress" title={task.request}>{task.request}</span> : <span className="progress" title={task.progress}>{task.progress || t("尚未补充进展")}</span>}
       {(task.agent || task.review_status !== 'none' || task.needs_input || steps || task.review_withdrawn_at) && <span className="task-signals">{steps && <span className="step-count" title={t("计划步骤完成数")}>{steps} {t("步")}</span>}{task.review_withdrawn_at && <span className="review-badge withdrawn" title={t("Agent 在你验收前重新打开了任务")}>{t("已撤回验收")}</span>}{task.review_status !== 'none' && <span className={`review-badge ${task.review_status}`}>{t(reviewLabels[task.review_status])}</span>}{task.needs_input && <span className="input-signal">{t("需要你补充")}</span>}{task.agent && <span className="agent-name" title={tutorial ? t("教学示例") : t("最后上报：{0}", task.agent)}>{task.agent}</span>}</span>}
-      <span className="task-meta">{task.branch ? <span className="branch" title={task.branch}><Icon name="branch" /><span>{task.branch}</span></span> : <span>{!tutorial && !task.agent_updated_at ? t("等待 Agent 接手") : ''}</span>}<span className="update-time">{!tutorial && isStale(task, staleHours, now) && <span className="stale" title={t("已超过设置的时间未收到更新；任务状态保持不变。")}>{t("较久未更新")}</span>}<time dateTime={timestamp} title={timeTitle}>{recent && t("最近变更 ")}{relativeTime(timestamp, now)}</time></span></span>
+      <span className="task-meta">{task.branch ? <span className="branch" title={task.branch}><Icon name="branch" /><span>{task.branch}</span></span> : <span>{task.personal ? t("仅自己可见") : !tutorial && !task.agent_updated_at ? t("等待 Agent 接手") : ''}</span>}<span className="update-time">{!tutorial && !waiting && isStale(task, staleHours, now) && <span className="stale" title={t("已超过设置的时间未收到更新；任务状态保持不变。")}>{t("较久未更新")}</span>}<time dateTime={timestamp} title={timeTitle}>{recent && t("最近变更 ")}{relativeTime(timestamp, now)}</time></span></span>
       </>}
     </button>
   </li>;
@@ -70,23 +75,26 @@ function FloatingMenu({ label, x, y, onClose, children }: { label: string; x: nu
 function ProjectMenu({ project, color, x, y, onColor, onRename, onArchive, onBlock, onClose }: { project: Project; color: ProjectColor | undefined; x: number; y: number; onColor: (color: ProjectColor | null) => void; onRename: (name: string) => void; onArchive: () => void; onBlock: () => void; onClose: () => void }) {
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(project.name);
-  return <FloatingMenu label={t("项目操作：{0}", project.name)} x={x} y={y} onClose={onClose}>
+  return <FloatingMenu label={t("项目操作：{0}", projectLabel(project))} x={x} y={y} onClose={onClose}>
     {renaming ? <form className="menu-rename" onSubmit={event => { event.preventDefault(); if (name.trim()) onRename(name.trim()); }}>
       <input autoFocus maxLength={80} value={name} aria-label={t("项目显示名")} onChange={event => setName(event.target.value)} onFocus={event => event.currentTarget.select()} />
       <button type="submit" disabled={!name.trim()}>{t("保存")}</button>
     </form> : <>
       <div className="menu-swatches" role="group" aria-label={t("项目颜色")}>{PROJECT_COLORS.map(value => <button key={value} role="menuitemradio" aria-checked={color === value} aria-label={t(`颜色：${value}`)} className={`swatch label-${value}`} onClick={() => onColor(value)} />)}<button role="menuitemradio" aria-checked={!color} aria-label={t("无颜色")} title={t("无颜色")} className="swatch swatch-none" onClick={() => onColor(null)} /></div>
-      <button role="menuitem" title={t("只改看板上的显示名，不影响 Agent 找到这个项目")} onClick={() => setRenaming(true)}>{t("重命名")}</button>
+      {!project.personal && <button role="menuitem" title={t("只改看板上的显示名，不影响 Agent 找到这个项目")} onClick={() => setRenaming(true)}>{t("重命名")}</button>}
       <button role="menuitem" title={t("该项目的任务移到归档，可在归档中心逐条恢复")} onClick={onArchive}>{t("归档项目")}</button>
-      <button role="menuitem" title={t("之后在该项目中工作的 Agent 不再记录到看板；可在设置 → Agent 接入中取消")} onClick={onBlock}>{t("屏蔽项目")}</button>
+      {!project.personal && <button role="menuitem" title={t("之后在该项目中工作的 Agent 不再记录到看板；可在设置 → Agent 接入中取消")} onClick={onBlock}>{t("屏蔽项目")}</button>}
     </>}
   </FloatingMenu>;
 }
 
-function TaskMenu({ task, x, y, onAct, onClose }: { task: Task; x: number; y: number; onAct: (action: 'accept' | 'archive') => void; onClose: () => void }) {
+type TaskAction = 'accept' | 'archive' | PersonalMove;
+
+function TaskMenu({ task, x, y, onAct, onClose }: { task: Task; x: number; y: number; onAct: (action: TaskAction) => void; onClose: () => void }) {
   const reviewable = awaitsReview(task);
   return <FloatingMenu label={t("任务操作：{0}", task.title)} x={x} y={y} onClose={onClose}>
-    <button role="menuitem" disabled={!reviewable} title={reviewable ? t("直接通过验收，不填写意见") : task.status === 'done' ? t("该任务无需验收") : t("任务尚未完成")} onClick={() => onAct('accept')}>{t("一键验收")}</button>
+    {task.personal ? personalMoves(task.status).map(move => <button key={move} role="menuitem" onClick={() => onAct(move)}>{t(personalMoveLabels[move])}</button>)
+    : <button role="menuitem" disabled={!reviewable} title={reviewable ? t("直接通过验收，不填写意见") : task.status === 'done' ? t("该任务无需验收") : t("任务尚未完成")} onClick={() => onAct('accept')}>{t("一键验收")}</button>}
     <button role="menuitem" title={t("移到本项目的「已归档」，可随时恢复")} onClick={() => onAct('archive')}>{t("直接归档")}</button>
   </FloatingMenu>;
 }
@@ -118,12 +126,12 @@ function ArchivedGroup({ project, busy, onChanged }: { project: Project; busy: b
     catch (e) { setError(t("恢复失败：{0}", String(e))); void load(0); }
     finally { setRestoring(null); }
   }
-  return <div className="completed archived-group">
-    <button className="disclosure completed-toggle" disabled={busy} aria-expanded={open} onClick={() => setOpen(value => !value)}><Icon name="chevron" className={open ? 'rotated' : ''} />{t("已归档")} <span>{project.archived_count}</span></button>
+  return <div className="archived-group">
+    <button className="archived-toggle" disabled={busy} aria-expanded={open} onClick={() => setOpen(value => !value)}>{t("已归档 {0}", project.archived_count)} · {open ? t("收起") : t("查看")}</button>
     {open && <>
       <ul className="archived-list">{items.map(task => <li key={task.id}>
         <span className="archived-title" title={task.title}>{task.title}</span>
-        <span className="archived-state">{t(labels[task.status])}{task.status === 'done' && task.review_status !== 'none' ? ` · ${t(reviewLabels[task.review_status])}` : ''}</span>
+        <span className="archived-state">{task.personal ? t(personalLabels[task.status]) : t(labels[task.status])}{task.status === 'done' && task.review_status !== 'none' ? ` · ${t(reviewLabels[task.review_status])}` : ''}</span>
         <button className="text-button" disabled={restoring !== null} onClick={() => void restore(task)}>{restoring === task.id ? t("恢复中…") : t("恢复")}</button>
       </li>)}</ul>
       {loading && !items.length && <p className="archived-note">{t("正在读取…")}</p>}
@@ -145,18 +153,27 @@ function ProjectSection({ project, preferences, searching, update, now, busy, on
   const pinned = preferences.pinned_projects.includes(project.id);
   const toggle = (key: 'collapsed_projects' | 'completed_projects' | 'pinned_projects') => update({ [key]: preferences[key].includes(project.id) ? preferences[key].filter(id => id !== project.id) : [...preferences[key], project.id] });
   const advancingIds = useMemo(() => new Set(preferences.activity_style === 'off' ? [] : project.tasks.filter(task => isAdvancing(task, preferences.activity_minutes, now)).map(task => task.id)), [project.tasks, preferences.activity_style, preferences.activity_minutes, now]);
+  // Worked out here with the real clock: concise rows get now=0 so they skip the 30-second re-render.
+  const waitingIds = useMemo(() => new Set(project.tasks.filter(task => !isTutorialTask(project, task) && isWaiting(task, preferences.stale_after_hours, now)).map(task => task.id)), [project, preferences.stale_after_hours, now]);
   const color = preferences.project_colors[String(project.id)];
-  const heading = <><Icon name="chevron" className={!collapsed ? 'rotated' : ''} />{color && <span className={`project-color label-${color}`} aria-hidden="true" />}<h2>{project.name}</h2>{advancingIds.size > 0 && <span className="project-activity status in_progress advancing" title={t("{0} 个任务正在推进", advancingIds.size)}><span className="status-dot" /><ActivityMark /></span>}<span className="project-count">{rows.length}</span></>;
-  return <section className="project" aria-label={project.name}>
+  const name = projectLabel(project);
+  const place = project.personal ? t("仅自己可见，Agent 看不到") : project.path;
+  const showArchive = native && project.archived_count > 0;
+  const heading = <><Icon name="chevron" className={!collapsed ? 'rotated' : ''} />{color && <span className={`project-color label-${color}`} aria-hidden="true" />}<h2>{name}</h2>{advancingIds.size > 0 && <span className="project-activity status in_progress advancing" title={t("{0} 个任务正在推进", advancingIds.size)}><span className="status-dot" /><ActivityMark /></span>}<span className="project-count">{rows.length}</span></>;
+  return <section className={`project ${project.personal ? 'project-personal' : ''}`} aria-label={name}>
     <div className="project-header" onContextMenu={event => {
       event.preventDefault();
       const box = event.currentTarget.getBoundingClientRect();
       onProjectMenu(project.id, event.clientX || box.left + 24, event.clientY || box.bottom);
-    }}>{forceExpanded ? <div className="project-heading project-heading-static" title={t("{0}\n{1}视图临时展开，原折叠设置保留", project.path, recent ? t("最近变更") : t("搜索"))}>{heading}</div> : <button className="project-heading" disabled={busy} aria-expanded={!collapsed} title={project.path} onClick={() => toggle('collapsed_projects')}>{heading}</button>}<button className={`icon-button project-pin ${pinned ? 'is-pinned' : ''}`} aria-pressed={pinned} aria-label={t("{0}：{1}", pinned ? t("取消置顶项目") : t("置顶项目"), project.name)} title={recent ? t("最近变更视图按时间排序，原置顶设置保留") : pinned ? t("取消项目置顶") : t("将项目排在前面")} disabled={busy || recent} onClick={() => toggle('pinned_projects')}><Icon name="pin" /></button></div>
+    }}>{forceExpanded ? <div className="project-heading project-heading-static" title={t("{0}\n{1}视图临时展开，原折叠设置保留", place, recent ? t("最近变更") : t("搜索"))}>{heading}</div> : <button className="project-heading" disabled={busy} aria-expanded={!collapsed} title={place} onClick={() => toggle('collapsed_projects')}>{heading}</button>}<button className={`icon-button project-pin ${pinned ? 'is-pinned' : ''}`} aria-pressed={pinned} aria-label={t("{0}：{1}", pinned ? t("取消置顶项目") : t("置顶项目"), name)} title={recent ? t("最近变更视图按时间排序，原置顶设置保留") : pinned ? t("取消项目置顶") : t("将项目排在前面")} disabled={busy || recent} onClick={() => toggle('pinned_projects')}><Icon name="pin" /></button></div>
     {!collapsed && <div className="project-content">
-      <ul className="task-list">{rows.map(task => <TaskRow key={task.id} language={language} advancing={advancingIds.has(task.id)} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={recent} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>
-      {!forceExpanded && preferences.filter === 'all' && done.length > 0 && <div className="completed"><button className="disclosure completed-toggle" disabled={busy} aria-expanded={completed} onClick={() => toggle('completed_projects')}><Icon name="chevron" className={completed ? 'rotated' : ''} />{t("已完成")} <span>{done.length}</span></button>{completed && <ul className="task-list">{done.map(task => <TaskRow key={task.id} language={language} advancing={advancingIds.has(task.id)} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={false} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>}</div>}
-      {native && !forceExpanded && preferences.filter === 'all' && project.archived_count > 0 && <ArchivedGroup project={project} busy={busy} onChanged={onChanged} />}
+      <ul className="task-list">{rows.map((task, index) => <TaskRow key={task.id} index={index + 1} language={language} advancing={advancingIds.has(task.id)} waiting={waitingIds.has(task.id)} activityMinutes={preferences.activity_minutes} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={recent} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>
+      {/* One nested fold per project: the archive only shows as a quiet line inside 已完成. */}
+      {!forceExpanded && preferences.filter === 'all' && (done.length > 0 || showArchive) && <div className="completed">
+        {done.length > 0 && <button className="disclosure completed-toggle" disabled={busy} aria-expanded={completed} onClick={() => toggle('completed_projects')}><Icon name="chevron" className={completed ? 'rotated' : ''} />{t("已完成")} <span>{done.length}</span></button>}
+        {completed && done.length > 0 && <ul className="task-list">{done.map(task => <TaskRow key={task.id} language={language} advancing={advancingIds.has(task.id)} waiting={false} activityMinutes={preferences.activity_minutes} task={task} tutorial={isTutorialTask(project, task)} concise={preferences.concise} recent={false} now={preferences.concise ? 0 : now} staleHours={preferences.stale_after_hours} onOpen={onOpen} onMenu={onMenu} />)}</ul>}
+        {showArchive && (completed || done.length === 0) && <ArchivedGroup project={project} busy={busy} onChanged={onChanged} />}
+      </div>}
     </div>}
   </section>;
 }
@@ -171,7 +188,13 @@ export function App() {
   const [compactBusy, setCompactBusy] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<false | 'desktop' | 'integration'>(false);
+  // Client setup state for the first-run guide card; re-read when Settings closes, where setup may have changed.
+  const [clients, setClients] = useState<ClientStatus[] | null>(null);
+  const [guideHeld, setGuideHeld] = useState(false);
+  const [manualClient, setManualClient] = useState<string | undefined>();
+  const reloadClients = useCallback(() => { if (native) readClients().then(setClients, () => setClients(null)); }, []);
+  useEffect(() => { reloadClients(); }, [reloadClients]);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [captureDraft, setCaptureDraft] = useState<CaptureInput | null>(null);
@@ -228,9 +251,9 @@ export function App() {
   const openCapture = useCallback(() => {
     if (taskActionBusy.current) return;
     const prefs = preferencesRef.current;
-    const projects = snapshotRef.current.projects.filter(project => !isTutorialProject(project));
+    const projects = snapshotRef.current.projects.filter(project => !isTutorialProject(project) && !project.personal);
     const focused = projects.find(project => project.id === prefs.focused_project);
-    setCaptureDraft(draft => draft ?? { project_path: focused?.path ?? (projects.length === 1 ? projects[0].path : ''), task_key: `capture:${crypto.randomUUID()}`, title: '', request: '' });
+    setCaptureDraft(draft => draft ?? { project_path: focused?.path ?? (projects.length === 1 ? projects[0].path : ''), task_key: `capture:${crypto.randomUUID()}`, title: '', request: '', personal: false, later: false });
     setSelectedTaskId(null); setSettingsOpen(false); setCaptureOpen(true);
   }, []);
 
@@ -286,7 +309,8 @@ export function App() {
     setProjectMenu(null);
     if (taskActionBusy.current) return;
     taskActionBusy.current = true;
-    const name = snapshotRef.current.projects.find(project => project.id === projectId)?.name ?? '';
+    const project = snapshotRef.current.projects.find(item => item.id === projectId);
+    const name = project ? projectLabel(project) : '';
     try {
       const ids = await archiveProject(projectId);
       if (ids.length) offerUndo(t("已归档项目：{0}", name), () => restoreTasks(ids));
@@ -314,7 +338,7 @@ export function App() {
     try { await current.undo(); await refreshAfterWrite(); }
     catch (e) { setError(t("撤销失败：{0}", String(e))); }
   }
-  async function menuAction(task: Task, action: 'accept' | 'archive') {
+  async function menuAction(task: Task, action: TaskAction) {
     setMenu(null);
     if (taskActionBusy.current) return;
     taskActionBusy.current = true;
@@ -322,12 +346,15 @@ export function App() {
       if (action === 'accept') {
         const receipt = await reviewTask(task.id, task.updated_at, true, '');
         offerUndo(t("已验收：{0}", task.title), () => undoAccept(receipt.id, receipt.updated_at));
+      } else if (action !== 'archive') {
+        const receipt = await setPersonalStatus(task.id, task.updated_at, personalMoveTarget[action]);
+        offerUndo(t(personalMoveDone[action], task.title), () => setPersonalStatus(receipt.id, receipt.updated_at, task.status));
       } else {
         const receipt = await archiveTask(task.id, task.updated_at);
         offerUndo(t("已归档：{0}", task.title), () => restoreArchivedTask(receipt.id, receipt.updated_at));
       }
       await refreshAfterWrite();
-    } catch (e) { setError(t("{0}失败：{1}", action === 'accept' ? t("验收") : t("归档"), String(e))); }
+    } catch (e) { setError(t("{0}失败：{1}", action === 'accept' ? t("验收") : action === 'archive' ? t("归档") : t(personalMoveLabels[action]), String(e))); }
     finally { taskActionBusy.current = false; }
   }
   const menuActionRef = useRef(menuAction);
@@ -410,7 +437,40 @@ export function App() {
     return () => query.removeEventListener('change', follow);
   }, []);
   const theme = preferences.theme === 'system' ? systemDark ? 'dark' : 'light' : preferences.theme;
-  useEffect(() => { document.documentElement.dataset.theme = theme; applyAccent(preferences.accent, theme); }, [theme, preferences.accent]);
+  const shownTheme = useRef<string | null>(null);
+  // Played only on a click, so the pin does not move when the board opens already pinned.
+  const [pinMotion, setPinMotion] = useState<'' | 'pin-press' | 'pin-lift'>('');
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    let cancelled = false, restore = 0, settle = 0;
+    // Switch colors with transitions off: a color transition interrupted by quick toggles could stay stuck on the old theme.
+    const apply = () => {
+      if (cancelled) return;
+      root.classList.add('theme-switching');
+      root.dataset.theme = theme; applyAccent(preferences.accent, theme);
+      void document.body.offsetHeight;
+      restore = window.setTimeout(() => root.classList.remove('theme-switching'), 1);
+    };
+    const switched = shownTheme.current !== null && shownTheme.current !== theme;
+    shownTheme.current = theme;
+    // The motion is a short cross-fade of the whole page plus the toggle icon turning in.
+    if (switched && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      root.classList.add('theme-changed');
+      settle = window.setTimeout(() => root.classList.remove('theme-changed'), 400);
+      if (document.startViewTransition) document.startViewTransition(apply); else apply();
+    } else apply();
+    return () => { cancelled = true; window.clearTimeout(restore); window.clearTimeout(settle); root.classList.remove('theme-switching', 'theme-changed'); };
+  }, [theme, preferences.accent]);
+  useEffect(() => {
+    // A mouse click leaves the button focused, and Chromium then shows its focus ring on any key, even Shift for the input method.
+    // Only keys that move focus or act on it bring the ring back.
+    const root = document.documentElement;
+    const pointer = () => { root.dataset.pointer = ''; };
+    const key = (event: KeyboardEvent) => { if (!['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Process', 'Unidentified'].includes(event.key) && !event.isComposing) delete root.dataset.pointer; };
+    window.addEventListener('pointerdown', pointer, true);
+    window.addEventListener('keydown', key, true);
+    return () => { window.removeEventListener('pointerdown', pointer, true); window.removeEventListener('keydown', key, true); };
+  }, []);
 
   const reloadPause = useCallback(async () => {
     try { setPausedState(await readTrackingPaused()); setPauseReady(true); setPauseError(''); }
@@ -482,6 +542,10 @@ export function App() {
   const focusActive = preferences.focused_project !== null && !preferences.compact;
   const searchQuery = searchText.trim().toLowerCase();
   const searching = searchQuery !== '' && !preferences.compact;
+  // Shown until an Agent client is set up or the board has real Agent work; the tutorial and personal todos do not count.
+  const hasAgentWork = snapshot.projects.some(project => !project.personal && !isTutorialProject(project));
+  const showGuide = native && ready && !searching && !preferences.agent_guide_dismissed && clients !== null
+    && (guideHeld || (!clients.some(client => client.mcp === 'ok') && !hasAgentWork));
   const recent = preferences.filter === 'recent';
   const projectsInScope = useMemo(() => {
     const scoped = searching ? snapshot.projects : focusActive ? focusedProject ? [focusedProject] : [] : snapshot.projects;
@@ -490,20 +554,23 @@ export function App() {
   const allTasks = useMemo(() => projectsInScope.flatMap(project => project.tasks), [projectsInScope]);
   // Recent order follows the project's newest task, whatever the status filter shows.
   const latestChange = useMemo(() => new Map(projectsInScope.map(project => [project.id, Math.max(0, ...project.tasks.map(changedAt))])), [projectsInScope]);
-  const ongoing = allTasks.filter(task => task.status === 'in_progress').length;
+  // 待继续 tasks are left to the 全部 tab; 进行中 only counts work that is still moving.
+  const ongoing = projectsInScope.reduce((count, project) => count + project.tasks.filter(task => task.status === 'in_progress' && (isTutorialTask(project, task) || !isWaiting(task, preferences.stale_after_hours, now))).length, 0);
   const advancingCount = preferences.activity_style === 'off' ? 0 : allTasks.filter(task => isAdvancing(task, preferences.activity_minutes, now)).length;
   const attention = allTasks.filter(needsAttention).length;
   const filterCounts: Record<Filter, number | null> = { all: null, attention, in_progress: ongoing, recent: null };
   const visibleProjects = useMemo(() => projectsInScope.map(project => {
-    const tasks = project.tasks.filter(task => matchesFilter(task, preferences.filter));
+    const tasks = project.tasks.filter(task => matchesFilter(task, preferences.filter)
+      && !(preferences.filter === 'in_progress' && !isTutorialTask(project, task) && isWaiting(task, preferences.stale_after_hours, now)));
     if (recent) tasks.sort((a, b) => changedAt(b) - changedAt(a) || b.id - a.id);
     return { ...project, tasks };
   }).filter(project => project.tasks.length > 0).sort((a, b) => recent
     ? changedAt(b.tasks[0]) - changedAt(a.tasks[0]) || a.id - b.id
-    : Number(preferences.pinned_projects.includes(b.id)) - Number(preferences.pinned_projects.includes(a.id))
+    : Number(Boolean(b.personal)) - Number(Boolean(a.personal))
+      || Number(preferences.pinned_projects.includes(b.id)) - Number(preferences.pinned_projects.includes(a.id))
       || (preferences.project_sort === 'name'
         ? a.name.localeCompare(b.name, locale(), { sensitivity: 'base', numeric: true }) || a.id - b.id
-        : latestChange.get(b.id)! - latestChange.get(a.id)! || a.id - b.id)), [projectsInScope, preferences.filter, preferences.pinned_projects, preferences.project_sort, recent, latestChange]);
+        : latestChange.get(b.id)! - latestChange.get(a.id)! || a.id - b.id)), [projectsInScope, preferences.filter, preferences.pinned_projects, preferences.project_sort, preferences.stale_after_hours, now, recent, latestChange]);
   const matchingCount = visibleProjects.reduce((count, project) => count + project.tasks.length, 0);
   const selectedProject = snapshot.projects.find(project => project.tasks.some(task => task.id === selectedTaskId));
   const selectedTask = selectedProject?.tasks.find(task => task.id === selectedTaskId);
@@ -513,7 +580,7 @@ export function App() {
     if (ready && selectedTaskId !== null && !selectedTask) setSelectedTaskId(null);
   }, [ready, selectedTaskId, selectedTask]);
   const controls = <>
-    {!preferences.compact && <><button className={`icon-button ${preferences.always_on_top ? 'is-pinned' : ''}`} title={preferences.always_on_top ? t("取消置顶") : t("窗口置顶")} aria-label={preferences.always_on_top ? t("取消置顶") : t("窗口置顶")} aria-pressed={preferences.always_on_top} disabled={locked} onClick={() => void update({ always_on_top: !preferences.always_on_top })}><Icon name="pin" /></button><button className="icon-button" title={theme === 'light' ? t("切换深色") : t("切换浅色")} aria-label={theme === 'light' ? t("切换深色") : t("切换浅色")} disabled={locked} onClick={() => void update({ theme: theme === 'light' ? 'dark' : 'light' })}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button><button className={`icon-button view-toggle ${preferences.concise ? 'is-active' : ''}`} title={preferences.concise ? t("切换详细模式") : t("切换简洁模式：仅标题和状态")} aria-label={preferences.concise ? t("切换详细模式") : t("切换简洁模式")} aria-pressed={preferences.concise} disabled={locked} onClick={() => void update({ concise: !preferences.concise })}><Icon name="list" /></button></>}
+    {!preferences.compact && <><button className={`icon-button ${preferences.always_on_top ? 'is-pinned' : ''}`} title={preferences.always_on_top ? t("取消置顶") : t("窗口置顶")} aria-label={preferences.always_on_top ? t("取消置顶") : t("窗口置顶")} aria-pressed={preferences.always_on_top} disabled={locked} onAnimationEnd={() => setPinMotion('')} onClick={() => { setPinMotion(preferences.always_on_top ? 'pin-lift' : 'pin-press'); void update({ always_on_top: !preferences.always_on_top }); }}><Icon name="pin" className={pinMotion} /></button><button className="icon-button" title={theme === 'light' ? t("切换深色") : t("切换浅色")} aria-label={theme === 'light' ? t("切换深色") : t("切换浅色")} disabled={locked} onClick={() => void update({ theme: theme === 'light' ? 'dark' : 'light' })}><Icon name={theme === 'light' ? 'moon' : 'sun'} className="theme-icon" /></button><button className={`icon-button view-toggle ${preferences.concise ? 'is-active' : ''}`} title={preferences.concise ? t("切换详细模式") : t("切换简洁模式：仅标题和状态")} aria-label={preferences.concise ? t("切换详细模式") : t("切换简洁模式")} aria-pressed={preferences.concise} disabled={locked} onClick={() => void update({ concise: !preferences.concise })}><Icon name="list" /></button></>}
     <button className="icon-button" aria-label={preferences.compact ? t("展开看板") : t("收成窄条")} title={preferences.compact ? t("展开看板") : t("收成窄条")} disabled={busy} onClick={() => void toggleCompact()}><Icon name={preferences.compact ? 'expand' : 'minus'} /></button>
     <button className="icon-button close-button" aria-label={t("隐藏到托盘")} title={native ? t("隐藏到托盘（从托盘恢复）") : t("浏览器预览不能隐藏到托盘")} disabled={!native} onClick={() => void hideWindow().catch(e => setError(String(e)))}><Icon name="close" /></button>
   </>;
@@ -525,22 +592,23 @@ export function App() {
       <div className="window-actions">{controls}</div>
     </header>
     {!preferences.compact && <>
-      {(snapshot.projects.length > 0 || focusActive || searchOpen) && <div className="project-focus"><select aria-label={t("聚焦项目")} value={searching ? '' : preferences.focused_project ?? ''} title={searching ? t("搜索期间查找全部项目，清空搜索后恢复原聚焦") : undefined} disabled={locked || searching} onChange={event => void update({ focused_project: event.target.value ? Number(event.target.value) : null })}><option value="">{searching ? t("搜索全部项目") : t("全部项目")} · {snapshot.projects.length}</option>{focusActive && !focusedProject && <option value={preferences.focused_project!}>{t("聚焦的项目暂无任务")}</option>}{snapshot.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select>{focusActive && !searching && <button className="text-button" disabled={locked} onClick={() => void update({ focused_project: null })}>{t("查看全部")}</button>}<button ref={searchButton} className={`icon-button search-toggle ${searchOpen ? 'is-active' : ''}`} aria-label={searchOpen ? t("收起查找") : t("查找任务")} aria-expanded={searchOpen} aria-controls="board-search" title={searchOpen ? t("收起查找并清空搜索") : t("查找任务（Ctrl+F）")} disabled={!ready} onClick={() => searchOpen ? closeSearch() : revealSearch()}><Icon name="search" /></button><button className={`icon-button refresh-button ${reloading ? 'is-spinning' : ''}`} aria-label={t("刷新看板")} title={t("刷新任务状态")} disabled={!ready || reloading} onClick={() => void manualRefresh()}><Icon name="refresh" /></button></div>}
+      {(snapshot.projects.length > 0 || focusActive || searchOpen) && <div className="project-focus"><select aria-label={t("聚焦项目")} value={searching ? '' : preferences.focused_project ?? ''} title={searching ? t("搜索期间查找全部项目，清空搜索后恢复原聚焦") : undefined} disabled={locked || searching} onChange={event => void update({ focused_project: event.target.value ? Number(event.target.value) : null })}><option value="">{searching ? t("搜索全部项目") : t("全部项目")} · {snapshot.projects.length}</option>{focusActive && !focusedProject && <option value={preferences.focused_project!}>{t("聚焦的项目暂无任务")}</option>}{snapshot.projects.map(project => <option value={project.id} key={project.id}>{projectLabel(project)}</option>)}</select>{focusActive && !searching && <button className="text-button" disabled={locked} onClick={() => void update({ focused_project: null })}>{t("查看全部")}</button>}<button ref={searchButton} className={`icon-button search-toggle ${searchOpen ? 'is-active' : ''}`} aria-label={searchOpen ? t("收起查找") : t("查找任务")} aria-expanded={searchOpen} aria-controls="board-search" title={searchOpen ? t("收起查找并清空搜索") : t("查找任务（Ctrl+F）")} disabled={!ready} onClick={() => searchOpen ? closeSearch() : revealSearch()}><Icon name="search" /></button><button className={`icon-button refresh-button ${reloading ? 'is-spinning' : ''}`} aria-label={t("刷新看板")} title={t("刷新任务状态")} disabled={!ready || reloading} onClick={() => void manualRefresh()}><Icon name="refresh" /></button></div>}
       {searchOpen && <div id="board-search" className="board-search"><div className="board-search-row"><input ref={searchInput} type="search" maxLength={160} aria-label={t("搜索全部项目")} placeholder={t("搜索任务或项目")} value={searchText} onChange={event => setSearchText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSearch(); } }} /><button className="text-button" disabled={!searchText} onClick={() => { setSearchText(''); searchInput.current?.focus(); }}>{t("清空搜索")}</button></div>{searching && <p className="search-scope">{t("搜索全部项目（不含归档） · {0} 项匹配", matchingCount)}</p>}</div>}
       <nav className="filters" aria-label={t("按状态筛选")} title={t("等你处理：受阻或需要你补充。已完成的任务直接变灰，可右键一键验收。最近变更含 Agent 和用户操作，按任务最近变更时间排列。")}>{(['all', 'attention', 'in_progress', 'recent'] as Filter[]).map(filter => <button key={filter} disabled={locked} aria-pressed={preferences.filter === filter} className={preferences.filter === filter ? 'selected' : ''} onClick={() => void update({ filter })}>{t(filterLabels[filter])}{filterCounts[filter] !== null && <span className={`filter-count ${filter === 'attention' && attention > 0 ? 'blocked' : ''}`}>{filterCounts[filter]}</span>}</button>)}</nav>
       {trackingPaused && <div className="paused-banner" role="status" title={t("Agent 照常工作；恢复后在下个正常里程碑或新任务恢复记录，不回补暂停期间。")}><span className="paused-dot" aria-hidden="true" /><span className="paused-text"><strong>{t("记录已暂停")}</strong> {t("· Agent 照常工作")}</span><button disabled={pauseBusy} onClick={() => void togglePause()}>{t("恢复记录")}</button></div>}
       {(error || pauseError) && <div className="error" role="alert"><span title={[error, pauseError].filter(Boolean).join(t("；"))}>{[error, pauseError].filter(Boolean).join(t("；"))}</span><button onClick={() => void retryRead()}>{t("重试")}</button></div>}
       <div className="board" aria-label={t("项目任务")} aria-busy={!ready}>
+        {showGuide && <AgentGuide clients={clients!} onClients={setClients} onConnected={() => setGuideHeld(true)} onOpenSettings={client => { setManualClient(client); setSettingsOpen('integration'); }} onDismiss={() => { setGuideHeld(false); void update({ agent_guide_dismissed: true }); }} />}
         {recent && <p className="board-view-hint">{t("按最近变更排序并临时展开，含 Agent 和用户操作；此视图不按置顶排序。")}</p>}
         {!ready ? <div className="empty"><p>{t("正在读取看板…")}</p></div> : visibleProjects.length ? visibleProjects.map(project => <ProjectSection key={project.id} project={project} preferences={preferences} searching={searching} update={p => void update(p)} now={now} busy={locked} onOpen={setSelectedTaskId} onMenu={openMenu} onProjectMenu={openProjectMenu} onChanged={refreshAfterWrite} />) : <div className="empty"><Icon name="logo" /><h2>{searching ? t("没有匹配的任务") : snapshot.projects.length ? t("没有{0}的任务", preferences.filter === 'all' ? '' : t(filterLabels[preferences.filter])) : t(SLOGAN)}</h2>{searching ? <><p>{t("已搜索全部项目，当前状态筛选为“{0}”。", t(filterLabels[preferences.filter]))}</p><button className="outline-button empty-create" onClick={() => { setSearchText(''); searchInput.current?.focus(); }}>{t("清空搜索")}</button></> : snapshot.projects.length && preferences.filter !== 'all' ? <button className="outline-button empty-create" disabled={locked} onClick={() => void update({ filter: 'all' })}>{t("查看全部")}</button> : <button className="outline-button empty-create" disabled={!native} onClick={openCapture}>{t("新建任务")}</button>}{!native && <p className="preview-note">{t("浏览器布局预览 · 请启动桌面版连接本地看板")}</p>}</div>}
       </div>
-      <footer><button className="footer-create" disabled={!native && !demo} title={t("新建任务（Ctrl+Alt+N；窗口内 Ctrl+N）")} onClick={openCapture}>{t("＋ 新建")}</button>{!native && !demo ? <span className="footer-middle" title={t("浏览器预览不连接本地看板。")}>{t("布局预览")}</span> : <button className={`icon-button footer-pause ${trackingPaused ? 'is-paused' : ''}`} aria-pressed={trackingPaused} aria-label={!pauseReady ? t("记录状态未读取") : trackingPaused ? t("继续记录") : t("暂停记录")} disabled={pauseBusy || !pauseReady} title={!pauseReady ? t("记录状态未读取") : trackingPaused ? t("{0}：{1}", t("继续记录"), t("下个正常里程碑或新任务恢复尝试，不回补暂停期间")) : t("{0}：{1}", t("暂停记录"), t("暂停后看板工具停止读写，Agent 照常工作"))} onClick={() => void togglePause()}><Icon name={trackingPaused ? 'play' : 'pause'} /></button>}<button className="icon-button footer-settings" aria-label={t("设置")} title={t("设置")} onClick={() => setSettingsOpen(true)}><Icon name="settings" /></button></footer>
+      <footer><button className="footer-create" disabled={!native && !demo} title={t("新建任务（Ctrl+Alt+N；窗口内 Ctrl+N）")} onClick={openCapture}>{t("＋ 新建")}</button>{!native && !demo ? <span className="footer-middle" title={t("浏览器预览不连接本地看板。")}>{t("布局预览")}</span> : <button className={`icon-button footer-pause ${trackingPaused ? 'is-paused' : ''}`} aria-pressed={trackingPaused} aria-label={!pauseReady ? t("记录状态未读取") : trackingPaused ? t("继续记录") : t("暂停记录")} disabled={pauseBusy || !pauseReady} title={!pauseReady ? t("记录状态未读取") : trackingPaused ? t("{0}：{1}", t("继续记录"), t("下个正常里程碑或新任务恢复尝试，不回补暂停期间")) : t("{0}：{1}", t("暂停记录"), t("暂停后看板工具停止读写，Agent 照常工作"))} onClick={() => void togglePause()}><Icon name={trackingPaused ? 'play' : 'pause'} /></button>}<button className="icon-button footer-settings" aria-label={t("设置")} title={t("设置")} onClick={() => { setManualClient(undefined); setSettingsOpen('desktop'); }}><Icon name="settings" /></button></footer>
     </>}
     {preferences.compact && (error || pauseError) && <span className="compact-error" title={[error, pauseError].filter(Boolean).join(t("；"))} role="alert">!</span>}
     {projectMenu && menuProject && !preferences.compact && <ProjectMenu key={`${projectMenu.id}:${projectMenu.x}:${projectMenu.y}`} project={menuProject} x={projectMenu.x} y={projectMenu.y} color={preferences.project_colors[String(menuProject.id)]} onColor={color => { const { [String(menuProject.id)]: _removed, ...rest } = preferences.project_colors; void update({ project_colors: color ? { ...rest, [String(menuProject.id)]: color } : rest }); setProjectMenu(null); }} onRename={name => void renameWholeProject(menuProject.id, name)} onArchive={() => void archiveWholeProject(menuProject.id)} onBlock={() => void blockProject(menuProject.id)} onClose={closeProjectMenu} />}
     {menu && menuTask && !preferences.compact && <TaskMenu key={`${menu.id}:${menu.x}:${menu.y}`} task={menuTask} x={menu.x} y={menu.y} onAct={action => void menuAction(menuTask, action)} onClose={closeMenu} />}
     {toast && !preferences.compact && <div key={toast.key} className="undo-toast" role="status"><span title={toast.message}>{toast.message}</span><button onClick={() => void runUndo()}>{t("撤销")}</button></div>}
-    {settingsOpen && <Settings preferences={preferences} busy={busy} disabled={locked} saveError={error} update={patch => void update(patch)} onShortcutChanged={() => void reloadPreferences().catch(e => setError(String(e)))} onBoardChanged={() => void refreshAfterWrite()} onClose={() => setSettingsOpen(false)} />}
+    {settingsOpen && <Settings preferences={preferences} busy={busy} disabled={locked} saveError={error} initialTab={settingsOpen} manualClient={manualClient} update={patch => void update(patch)} onShortcutChanged={() => void reloadPreferences().catch(e => setError(String(e)))} onBoardChanged={() => void refreshAfterWrite()} onClose={() => { setSettingsOpen(false); reloadClients(); }} />}
     {captureOpen && captureDraft && <CapturePanel draft={captureDraft} projects={snapshot.projects} onChange={setCaptureDraft} onCreated={onCreated} onClose={() => setCaptureOpen(false)} />}
     {selectedTask && selectedProject && <TaskDetails key={selectedTask.id} task={selectedTask} project={selectedProject} preferences={preferences} now={now} draft={feedbackDrafts[selectedTask.id]} onDraftChange={draft => setFeedbackDrafts(previous => { const next = { ...previous }; if (draft) next[selectedTask.id] = draft; else delete next[selectedTask.id]; return next; })} onBusyChange={value => { taskActionBusy.current = value; }} onChanged={refreshAfterWrite} onClose={() => setSelectedTaskId(null)} />}
   </main>;

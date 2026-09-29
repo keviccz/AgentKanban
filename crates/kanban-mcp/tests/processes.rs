@@ -363,6 +363,8 @@ fn live_mcp_can_take_over_captured_work_and_rediscover_a_human_rejection() {
             task_key: "user-stable-uuid".into(),
             title: "制作本地报告".into(),
             request: "报告需要中文标题\n保留原始输入数据".into(),
+            personal: false,
+            later: false,
         })
         .unwrap();
     let mut client = Client::launch(&data_dir);
