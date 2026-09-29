@@ -1,5 +1,5 @@
 // Browser-only sample board for screenshots and docs: open the preview with ?demo
-// (optional &theme=dark&lang=en&accent=purple&activity=wave). The desktop app never uses it.
+// (optional &theme=dark&lang=en&accent=purple&activity=wave&concise). The desktop app never uses it.
 import { defaults, type Preferences, type Snapshot, type Task } from './types';
 
 const params = new URLSearchParams(location.search);
@@ -23,6 +23,11 @@ const steps = (done: number, total: number) => Array.from({ length: total }, (_,
 export const demoSnapshot: Snapshot = {
   revision: 1,
   projects: [
+    { id: 4, name: '我的待办', path: '', archived_count: 0, personal: true, tasks: [
+      task(4, { title: text('回复设计评审意见', 'Reply to the design review'), status: 'in_progress', personal: true, agent_updated_at: null, updated_at: ago(15),
+        request: text('周五前把结论同步给团队。', 'Share the decision with the team by Friday.') }),
+      task(4, { title: text('整理本周周报', 'Write the weekly report'), status: 'todo', personal: true, agent_updated_at: null, updated_at: ago(40) }),
+    ] },
     { id: 1, name: 'web-shop', path: 'D:\\code\\web-shop', archived_count: 3, tasks: [
       task(1, { title: text('结账页支持优惠码', 'Coupon codes at checkout'), status: 'in_progress', agent: 'Claude Code', agent_updated_at: ago(2), branch: 'feat/coupons', steps: steps(3, 5),
         progress: text('优惠码校验与金额计算已完成，正在补结账页交互和测试。', 'Validation and totals are done; wiring the checkout UI and tests now.') }),
@@ -35,6 +40,8 @@ export const demoSnapshot: Snapshot = {
     { id: 2, name: 'data-pipeline', path: 'D:\\code\\data-pipeline', archived_count: 0, tasks: [
       task(2, { title: text('夜间同步改为增量', 'Incremental nightly sync'), status: 'in_progress', agent: 'Codex', agent_updated_at: ago(6), steps: steps(1, 4),
         progress: text('已加变更游标，正在迁移历史数据。', 'Change cursor added; migrating historical rows.') }),
+      task(2, { title: text('旧日志表归档', 'Archive the old log tables'), status: 'in_progress', agent: 'Claude Code', agent_updated_at: ago(60 * 30), steps: steps(2, 3),
+        progress: text('已导出 2023 年以前的数据，删除旧表前停在确认一步。', 'Rows before 2023 are exported; stopped before dropping the old tables.') }),
       task(2, { title: text('补齐 ETL 单元测试', 'Unit tests for the ETL jobs'), status: 'todo', agent_updated_at: null, updated_at: ago(30),
         progress: text('等待 Agent 接手', 'Waiting for an Agent') }),
     ] },
@@ -53,6 +60,7 @@ export function demoPreferences(): Preferences {
     ...defaults,
     theme: theme === 'dark' || theme === 'light' ? theme : 'light',
     language: english ? 'en' : 'zh',
+    concise: params.has('concise'),
     accent: (accent ?? 'teal') as Preferences['accent'],
     activity_style: (activity ?? 'pulse') as Preferences['activity_style'],
     project_colors: { 1: 'blue', 2: 'green' },

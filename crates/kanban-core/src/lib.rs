@@ -192,6 +192,9 @@ pub struct ProjectBoard {
     /// The built-in group for personal todos that belong to no directory.
     #[serde(default)]
     pub personal: bool,
+    /// Blocked for Agents. It stays on the board only for the user's personal todos.
+    #[serde(default)]
+    pub blocked: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -646,14 +649,18 @@ impl Database {
         )?;
         let mut projects = Vec::new();
         {
+            // Blocking hides a project's Agent work, never the user's own todos in it.
             let mut statement = tx.prepare(
-                "SELECT id,name,path,
-                   (SELECT COUNT(*) FROM tasks a WHERE a.project_id=p.id AND a.archived=1),
-                   identity=?1
+                "WITH blocked(identity) AS (SELECT value FROM json_each(
+                   COALESCE((SELECT value FROM settings WHERE key='blocked_projects'),'[]')))
+                 SELECT id,name,path,
+                   CASE WHEN p.identity IN (SELECT identity FROM blocked) THEN 0
+                     ELSE (SELECT COUNT(*) FROM tasks a WHERE a.project_id=p.id AND a.archived=1) END,
+                   identity=?1,
+                   p.identity IN (SELECT identity FROM blocked)
                  FROM projects p
-                 WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.archived=0)
-                   AND p.identity NOT IN (SELECT value FROM json_each(
-                     COALESCE((SELECT value FROM settings WHERE key='blocked_projects'),'[]')))
+                 WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.archived=0
+                   AND (t.owner='user' OR p.identity NOT IN (SELECT identity FROM blocked)))
                  ORDER BY name COLLATE NOCASE,id",
             )?;
             let rows = statement.query_map([PERSONAL_IDENTITY], |row| {
@@ -664,6 +671,7 @@ impl Database {
                     tasks: Vec::new(),
                     archived_count: row.get(3)?,
                     personal: row.get(4)?,
+                    blocked: row.get(5)?,
                 })
             })?;
             for row in rows {
@@ -672,13 +680,13 @@ impl Database {
         }
         {
             let mut statement = tx.prepare(
-                "SELECT * FROM tasks WHERE project_id=?1 AND archived=0
+                "SELECT * FROM tasks WHERE project_id=?1 AND archived=0 AND (?2=0 OR owner='user')
                  ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'blocked' THEN 1 WHEN 'todo' THEN 2 ELSE 3 END,
                           updated_at DESC,id DESC"
             )?;
             for project in &mut projects {
                 project.tasks = statement
-                    .query_map([project.id], read_task)?
+                    .query_map(params![project.id, project.blocked], read_task)?
                     .collect::<std::result::Result<_, _>>()?;
             }
         }

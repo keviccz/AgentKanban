@@ -80,22 +80,27 @@ export function CopyButton({ text, label = t("复制"), copied = t("已复制"),
 }
 
 export const connected = (client: ClientStatus) => client.mcp === 'ok' && client.rules !== false;
-/** Installed clients that one click would still change. */
-export const pendingClients = (clients: ClientStatus[]) => clients.filter(client => client.detected && !connected(client));
-export interface ConnectAllResult { done: ClientStatus[]; failed: { client: ClientStatus; error: string }[] }
+/** Installed clients that one click would still change. A config the setup cannot parse needs manual merging. */
+export const pendingClients = (clients: ClientStatus[]) => clients.filter(client => client.detected && !connected(client) && client.mcp !== 'unreadable');
+export const manualClients = (clients: ClientStatus[]) => clients.filter(client => client.detected && client.mcp === 'unreadable');
+export interface ConnectAllResult { done: ClientStatus[]; failed: { client: ClientStatus; error: string }[]; manual: ClientStatus[] }
 /** One client after another, so a failure never leaves the others half-written. */
 export async function connectAll(clients: ClientStatus[]): Promise<ConnectAllResult> {
-  const result: ConnectAllResult = { done: [], failed: [] };
+  const result: ConnectAllResult = { done: [], failed: [], manual: manualClients(clients) };
   for (const client of pendingClients(clients)) {
     try { result.done.push(await setupClient(client.id)); }
     catch (e) { result.failed.push({ client, error: String(e) }); }
   }
   return result;
 }
-export const connectAllMessage = ({ done, failed }: ConnectAllResult) => [
-  done.length ? t("已接入 {0}，重启这些客户端后生效。", done.map(client => client.name).join(t("、"))) : '',
+export const connectedMessage = (done: ClientStatus[]) => t("已接入 {0}，重启这些客户端后生效。", done.map(client => client.name).join(t("、")));
+/** Failures and skipped clients: both still need the manual snippet in Settings. */
+export const problemMessage = ({ failed, manual }: Pick<ConnectAllResult, 'failed' | 'manual'>) => [
   ...failed.map(({ client, error }) => t("{0} 接入失败：{1}", client.name, error)),
+  manual.length ? t("{0} 的配置无法自动合并，需在设置中手动配置。", manual.map(client => client.name).join(t("、"))) : '',
 ].filter(Boolean).join(' ');
+/** The client whose manual snippet Settings should open first. */
+export const firstProblem = ({ failed, manual }: Pick<ConnectAllResult, 'failed' | 'manual'>) => failed[0]?.client.id ?? manual[0]?.id;
 const clientState = (client: ClientStatus) => connected(client) ? t("已配置")
   : client.mcp === 'outdated' ? t("配置待更新")
   : client.mcp === 'unreadable' ? t("配置无法解析")
@@ -186,9 +191,9 @@ export function Settings({ preferences, busy, disabled, saveError, initialTab = 
       const result = await connectAll(clients);
       const updated = new Map(result.done.map(client => [client.id, client]));
       setClients(list => list.map(item => updated.get(item.id) ?? item));
-      if (result.done.length) setSetupDone(connectAllMessage({ done: result.done, failed: [] }));
-      if (result.failed.length) setSetupResult({ ok: false, text: connectAllMessage({ done: [], failed: result.failed }) });
-      if (result.failed.length) setManualId(result.failed[0].client.id);
+      if (result.done.length) setSetupDone(connectedMessage(result.done));
+      const problem = firstProblem(result);
+      if (problem) { setSetupResult({ ok: false, text: problemMessage(result) }); setManualId(problem); }
     } finally { setSettingUp(''); }
   }
   async function runBackup() {

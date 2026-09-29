@@ -12,6 +12,17 @@ function Get-Installed([string]$name, [string]$directory) {
   }
 }
 
+# Windows can hold an executable briefly after its process exits. A silent NSIS
+# install then skips the locked file without failing, so wait until it is free.
+function Wait-Unlocked([string]$path) {
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    try { [IO.File]::Open($path, 'Open', 'ReadWrite', 'None').Dispose(); return }
+    catch { Start-Sleep -Milliseconds 200 }
+  }
+  throw "$path is still in use; close it and run the update again"
+}
+
 function Get-McpVersion([string]$executable) {
   $reported = & $executable --version
   if ($LASTEXITCODE -ne 0) { throw "MCP version check failed: $executable" }
@@ -62,8 +73,17 @@ function Invoke-AgentKanbanUpdate([switch]$SkipBuild, [switch]$StopMcp) {
         if (-not $process.WaitForExit(5000)) { throw "Board process $($process.Id) did not exit" }
       }
 
+      foreach ($name in @('agentkanban.exe', 'agentkanban-mcp.exe')) { Wait-Unlocked (Join-Path $installDir $name) }
+
       $setup = Start-Process -FilePath $installer -ArgumentList '/S' -WindowStyle Hidden -Wait -PassThru
       if ($setup.ExitCode -ne 0) { throw "Installer exited with $($setup.ExitCode)" }
+      # The installer keeps each packaged file's time, written just before the installer
+      # itself; an older board executable means the file was not replaced.
+      $installedApp = Get-Item -LiteralPath (Join-Path $installDir 'agentkanban.exe')
+      $packagedAt = (Get-Item -LiteralPath $installer).LastWriteTimeUtc
+      if (($packagedAt - $installedApp.LastWriteTimeUtc).TotalMinutes -gt 2) {
+        throw "Installed agentkanban.exe is not from this installer (installed $($installedApp.LastWriteTimeUtc), packaged $packagedAt)"
+      }
       $installedMcp = Join-Path $installDir 'agentkanban-mcp.exe'
       $installedFile = Get-Item -LiteralPath $installedMcp
       if ($null -ne $builtAt -and [Math]::Abs(($builtAt - $installedFile.LastWriteTimeUtc).TotalSeconds) -gt 2) {

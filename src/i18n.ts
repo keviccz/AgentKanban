@@ -529,6 +529,8 @@ const en: Record<string, string> = {
   '打开接入设置': 'Open Agent settings',
   '已接入 {0}，重启这些客户端后生效。': 'Connected {0}. Restart these clients to load it.',
   '{0} 接入失败：{1}': '{0} failed: {1}',
+  '{0} 的配置无法自动合并，需在设置中手动配置。': 'The {0} config cannot be merged automatically; set it up by hand in Settings.',
+  '{0}\n已屏蔽 Agent 记录，这里只显示你的个人待办；可在设置 → Agent 接入中取消屏蔽': '{0}\nBlocked for Agents: only your personal todos show here. Unblock it in Settings → Agents',
   '接入本机已检测到、尚未配置好的客户端：{0}': 'Connect the detected clients not yet set up: {0}',
   '接入全部（{0}）': 'Connect all ({0})',
   '、': ', ',

@@ -346,6 +346,8 @@ details summary { font-size: 11px; color: var(--muted); cursor: pointer; padding
 .agent-guide p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
 .agent-guide .agent-guide-done { color: var(--green); }
 .agent-guide .panel-error { color: var(--amber); }
+/* With the card above it, the empty board message sits right below instead of filling a whole screen. */
+.agent-guide ~ .empty { min-height: 0; padding-top: 28px; }
 .agent-guide-clients { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 9px; color: var(--muted); font-size: 11px; }
 .agent-guide-chip { padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--text); font-weight: 600; line-height: 18px; }
 .agent-guide-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; margin-top: 11px; }

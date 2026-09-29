@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { t } from './i18n';
 import { Icon } from './Icon';
-import { connectAll, connectAllMessage, pendingClients, type ConnectAllResult } from './Panels';
+import { connectAll, connectedMessage, firstProblem, manualClients, pendingClients, problemMessage, type ConnectAllResult } from './Panels';
 import type { ClientStatus } from './types';
 
 /** First-run card on the board: connects the detected Agent clients or leads to Settings. */
@@ -30,7 +30,11 @@ export function AgentGuide({ clients, onClients, onConnected, onOpenSettings, on
     } finally { setWorking(false); }
   }
 
-  const failed = result?.failed ?? [];
+  // Before connecting, clients whose config needs manual merging count as problems too.
+  const problems = result ?? { failed: [], manual: manualClients(clients) };
+  const problem = firstProblem(problems);
+  // Nothing connected yet: "got it" only clears the message; the card stays for another try.
+  const acknowledge = () => result && result.done.length === 0 ? setResult(null) : onDismiss();
   return <section className="agent-guide" aria-labelledby="agent-guide-title">
     <div className="agent-guide-head">
       <Icon name="logo" />
@@ -38,22 +42,24 @@ export function AgentGuide({ clients, onClients, onConnected, onOpenSettings, on
       <button className="icon-button agent-guide-close" aria-label={t("关闭引导")} title={t("不再显示；之后可在设置 → Agent 接入中接入")} onClick={onDismiss}><Icon name="close" /></button>
     </div>
     {result ? <>
-      {result.done.length > 0 && <p role="status" className="agent-guide-done">{connectAllMessage({ done: result.done, failed: [] })} {t("之后 Agent 开工时，任务会自动出现在这里。")}</p>}
-      {failed.length > 0 && <p role="alert" className="panel-error">{connectAllMessage({ done: [], failed })}</p>}
+      {result.done.length > 0 && <p role="status" className="agent-guide-done">{connectedMessage(result.done)} {t("之后 Agent 开工时，任务会自动出现在这里。")}</p>}
+      {problem && <p role="alert" className="panel-error">{problemMessage(result)}</p>}
     </> : <>
       <p>{t("接入后，Agent 做会改文件的任务时，会自动把目标、步骤和进度记到看板。")}</p>
       {detected.length > 0
         ? <div className="agent-guide-clients" aria-label={t("已检测到的客户端")}><span>{t("已检测到")}</span>{detected.map(client => <span key={client.id} className="agent-guide-chip">{client.name}</span>)}</div>
         : <p>{t("还没检测到支持的客户端。安装 Codex、Claude Code 等之后回到这里，或在设置中手动配置。")}</p>}
+      {pending.length === 0 && problem && <p className="panel-error">{problemMessage(problems)}</p>}
     </>}
     <div className="agent-guide-actions">
       {result ? <>
-        <button className={failed.length ? 'text-button' : 'agent-guide-primary'} onClick={onDismiss}>{t("知道了")}</button>
-        {failed.length > 0 && <button className="agent-guide-primary" onClick={() => onOpenSettings(failed[0].client.id)}>{t("去设置手动配置")}</button>}
-      </> : <>
-        {pending.length > 0 && <button className="agent-guide-primary" disabled={working} onClick={() => void connect()}>{working ? t("正在接入…") : t("一键接入全部")}</button>}
-        {detected.length === 0 && <button className="text-button" onClick={() => onOpenSettings()}>{t("打开接入设置")}</button>}
-      </>}
+        <button className={problem ? 'text-button' : 'agent-guide-primary'} onClick={acknowledge}>{t("知道了")}</button>
+        {problem && <button className="agent-guide-primary" onClick={() => onOpenSettings(problem)}>{t("去设置手动配置")}</button>}
+      </> : pending.length > 0
+        ? <button className="agent-guide-primary" disabled={working} onClick={() => void connect()}>{working ? t("正在接入…") : t("一键接入全部")}</button>
+        : problem
+          ? <button className="agent-guide-primary" onClick={() => onOpenSettings(problem)}>{t("去设置手动配置")}</button>
+          : <button className="text-button" onClick={() => onOpenSettings()}>{t("打开接入设置")}</button>}
     </div>
   </section>;
 }

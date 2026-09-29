@@ -25,7 +25,9 @@ export interface ArchiveQuery { query?: string; project_id?: number; limit?: num
 export interface ArchivePage { items: ArchivedTask[]; next_offset: number | null }
 export interface BlockedProject { id: number; name: string; path: string }
 /** `personal` marks the built-in group for personal todos without a folder. */
-export interface Project { id: number; name: string; path: string; tasks: Task[]; archived_count: number; personal?: boolean }
+export interface Project { id: number; name: string; path: string; tasks: Task[]; archived_count: number; personal?: boolean;
+  /** Blocked for Agents; on the board only for the user's personal todos in it. */
+  blocked?: boolean }
 export const isTutorialTask = (project: Pick<Project, 'name'>, task: Pick<Task, 'agent' | 'task_key'>) => project.name === '新手教程'
   && task.agent === '教学示例'
   && (task.task_key === 'tutorial:follow-progress' || task.task_key === 'tutorial:review-delivery');

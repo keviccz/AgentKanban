@@ -33,15 +33,15 @@ Everything stays on your machine. It never calls a model API, uploads nothing, a
 ## Highlights
 
 - **Agents track themselves**: tasks that change files show up automatically with a goal, acceptance checks and plan steps. Plain Q&A is skipped; say "don't track this" to skip a task.
-- **See who is moving right now**: tasks with a recent report show a live "Advancing" animation, in seven styles such as pulsing dot, heartbeat and spinning ring.
+- **See who is moving right now**: tasks with a recent report show a live "Advancing" animation, in seven styles such as pulsing dot, heartbeat and spinning ring. Tasks with no report for too long show "Idle" and leave the In progress count.
 - **Interrupts only when it matters**: notifications for blocked tasks and questions only. Finished tasks turn gray; review is optional, with right-click accept or archive and a 6-second undo.
 - **Organized by project**: worktrees of one repository group together. Pin, color-label, rename, archive or block whole projects.
-- **Personal todos**: tick "Only me" to note something you do yourself. Agents cannot see it; right-click "Mark done" when you finish.
+- **Personal todos**: tick "Only me" to note something you do yourself, as To do, Doing or Done. Agents cannot see it.
 - **Light on context**: 3 MCP tools; a write returns a ~30-token receipt and a search returns 5 summaries by default.
 - **Keyboard friendly**: `Ctrl+Alt+K` to show, `Ctrl+Alt+N` to capture, and ↑↓ / Enter / A / E / `/` on the board.
 - **Looks good your way**: light, dark or system theme, 8 theme colors, Chinese or English UI, adjustable text size and opacity.
 - **Reliable local data**: SQLite with WAL handles several agents writing at once, optimistic locking prevents overwrites; one-click backup, an archive center and a work summary you can copy as Markdown.
-- **One-click setup**: writes the MCP config and tracking rules for Codex, Claude Code, Cursor and four more clients, backing up files first.
+- **One-click setup**: on first launch, a card on the board connects every Agent client on your computer at once. Supports Codex, Claude Code, Cursor and four more, backing up files before writing the MCP config and tracking rules.
 - **In-app updates**: checks GitHub Releases, verifies the signature and backs up the database before installing.
 
 <div align="center">

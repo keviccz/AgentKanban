@@ -83,7 +83,7 @@ function ProjectMenu({ project, color, x, y, onColor, onRename, onArchive, onBlo
       <div className="menu-swatches" role="group" aria-label={t("项目颜色")}>{PROJECT_COLORS.map(value => <button key={value} role="menuitemradio" aria-checked={color === value} aria-label={t(`颜色：${value}`)} className={`swatch label-${value}`} onClick={() => onColor(value)} />)}<button role="menuitemradio" aria-checked={!color} aria-label={t("无颜色")} title={t("无颜色")} className="swatch swatch-none" onClick={() => onColor(null)} /></div>
       {!project.personal && <button role="menuitem" title={t("只改看板上的显示名，不影响 Agent 找到这个项目")} onClick={() => setRenaming(true)}>{t("重命名")}</button>}
       <button role="menuitem" title={t("该项目的任务移到归档，可在归档中心逐条恢复")} onClick={onArchive}>{t("归档项目")}</button>
-      {!project.personal && <button role="menuitem" title={t("之后在该项目中工作的 Agent 不再记录到看板；可在设置 → Agent 接入中取消")} onClick={onBlock}>{t("屏蔽项目")}</button>}
+      {!project.personal && !project.blocked && <button role="menuitem" title={t("之后在该项目中工作的 Agent 不再记录到看板；可在设置 → Agent 接入中取消")} onClick={onBlock}>{t("屏蔽项目")}</button>}
     </>}
   </FloatingMenu>;
 }
@@ -157,7 +157,7 @@ function ProjectSection({ project, preferences, searching, update, now, busy, on
   const waitingIds = useMemo(() => new Set(project.tasks.filter(task => !isTutorialTask(project, task) && isWaiting(task, preferences.stale_after_hours, now)).map(task => task.id)), [project, preferences.stale_after_hours, now]);
   const color = preferences.project_colors[String(project.id)];
   const name = projectLabel(project);
-  const place = project.personal ? t("仅自己可见，Agent 看不到") : project.path;
+  const place = project.personal ? t("仅自己可见，Agent 看不到") : project.blocked ? t("{0}\n已屏蔽 Agent 记录，这里只显示你的个人待办；可在设置 → Agent 接入中取消屏蔽", project.path) : project.path;
   const showArchive = native && project.archived_count > 0;
   const heading = <><Icon name="chevron" className={!collapsed ? 'rotated' : ''} />{color && <span className={`project-color label-${color}`} aria-hidden="true" />}<h2>{name}</h2>{advancingIds.size > 0 && <span className="project-activity status in_progress advancing" title={t("{0} 个任务正在推进", advancingIds.size)}><span className="status-dot" /><ActivityMark /></span>}<span className="project-count">{rows.length}</span></>;
   return <section className={`project ${project.personal ? 'project-personal' : ''}`} aria-label={name}>
@@ -251,7 +251,7 @@ export function App() {
   const openCapture = useCallback(() => {
     if (taskActionBusy.current) return;
     const prefs = preferencesRef.current;
-    const projects = snapshotRef.current.projects.filter(project => !isTutorialProject(project) && !project.personal);
+    const projects = snapshotRef.current.projects.filter(project => !isTutorialProject(project) && !project.personal && !project.blocked);
     const focused = projects.find(project => project.id === prefs.focused_project);
     setCaptureDraft(draft => draft ?? { project_path: focused?.path ?? (projects.length === 1 ? projects[0].path : ''), task_key: `capture:${crypto.randomUUID()}`, title: '', request: '', personal: false, later: false });
     setSelectedTaskId(null); setSettingsOpen(false); setCaptureOpen(true);
@@ -543,7 +543,7 @@ export function App() {
   const searchQuery = searchText.trim().toLowerCase();
   const searching = searchQuery !== '' && !preferences.compact;
   // Shown until an Agent client is set up or the board has real Agent work; the tutorial and personal todos do not count.
-  const hasAgentWork = snapshot.projects.some(project => !project.personal && !isTutorialProject(project));
+  const hasAgentWork = snapshot.projects.some(project => project.tasks.some(task => !task.personal && !isTutorialTask(project, task)));
   const showGuide = native && ready && !searching && !preferences.agent_guide_dismissed && clients !== null
     && (guideHeld || (!clients.some(client => client.mcp === 'ok') && !hasAgentWork));
   const recent = preferences.filter === 'recent';

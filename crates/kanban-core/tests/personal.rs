@@ -201,3 +201,44 @@ fn a_personal_todo_can_wait_until_the_user_starts_it() {
         .unwrap();
     assert_eq!(agent.status, Status::Todo);
 }
+
+#[test]
+fn blocking_a_project_hides_its_agent_work_but_not_the_users_todos() {
+    let (_root, db, project) = setup();
+    let path = project.to_string_lossy().to_string();
+    db.upsert_from_json(json!({
+        "project_path": project, "task_key": "auto:work", "title": "work", "status": "in_progress", "progress": "p"
+    }))
+    .unwrap();
+    let archived = capture(&db, &path, "me:old", true);
+    db.archive_by_id(kanban_core::ArchiveById {
+        id: archived.id,
+        expected_updated_at: archived.updated_at,
+    })
+    .unwrap();
+    let project_id = db.board().unwrap().projects[0].id;
+    db.set_project_blocked(project_id, true).unwrap();
+    // Only Agent work: the project leaves the board as before.
+    assert!(db.board().unwrap().projects.is_empty());
+
+    capture(&db, &path, "me:mine", true);
+    let board = db.board().unwrap();
+    assert_eq!(board.projects.len(), 1);
+    let shown = &board.projects[0];
+    assert!(shown.blocked);
+    assert_eq!(shown.archived_count, 0);
+    assert_eq!(
+        shown
+            .tasks
+            .iter()
+            .map(|task| task.task_key.as_str())
+            .collect::<Vec<_>>(),
+        ["me:mine"]
+    );
+
+    db.set_project_blocked(project_id, false).unwrap();
+    let board = db.board().unwrap();
+    assert!(!board.projects[0].blocked);
+    assert_eq!(board.projects[0].tasks.len(), 2);
+    assert_eq!(board.projects[0].archived_count, 1);
+}
