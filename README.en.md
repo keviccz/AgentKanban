@@ -18,7 +18,7 @@ Agents do the work. You sign off.
 
 [中文](README.md) · **English**
 
-[Download](https://github.com/keviccz/AgentKanban/releases/latest) · [Quick start](#quick-start) · [Connect an agent](#supported-clients) · [Manual (Chinese)](docs/USAGE.md) · [FAQ](#faq)
+[Download](https://github.com/keviccz/AgentKanban/releases/latest) · [Quick start](#quick-start) · [Desktop pets](#desktop-pets) · [Connect an agent](#supported-clients) · [Manual (Chinese)](docs/USAGE.md) · [FAQ](#faq)
 
 <img src="docs/images/hero-en.png" alt="AgentKanban in light and dark themes" width="860" />
 
@@ -26,24 +26,26 @@ Agents do the work. You sign off.
 
 ---
 
-Run a few coding agents at once and you soon lose track of who is doing what, how far along it is, and what is waiting on you. AgentKanban is a small always-on-top window: through a local MCP server, **agents register their own tasks, write a plan, and report progress at each milestone**. You glance at it, add a note when needed, and sign off on results.
+Run a few coding agents at once and you soon lose track of who is doing what, how far along each one is, and which one is waiting on you. AgentKanban is a small always-on-top window: through a local MCP server, **agents register their own tasks, write a plan, and report progress at each milestone**. You glance at it, add a note when one asks, and sign off when the work is done.
 
 Everything stays on your machine. It never calls a model API, uploads nothing, and needs no account.
 
+https://github.com/user-attachments/assets/b379ef8f-cec2-43d8-b4b8-ec94182b5271
+
+<p align="center"><sub>AgentKanban in 34 seconds (sound on)</sub></p>
+
 ## Highlights
 
-- **Agents track themselves**: tasks that change files show up automatically with a goal, acceptance checks and plan steps. Plain Q&A is skipped; say "don't track this" to skip a task.
-- **See who is moving right now**: tasks with a recent report show a live "Advancing" animation, in seven styles such as pulsing dot, heartbeat and spinning ring. Tasks with no report for too long show "Idle" and leave the In progress count.
-- **Pixel Agent desktop pets**: one pixel buddy per Agent stands on top of the board and acts out the work: it pushes a step-count box while advancing, raises a "?" when it needs you, shows a green check when done and jumps when you accept. Drag it anywhere, click it to open its task, or right-click to split, pin, keep on top, or turn on gravity so it drops onto the taskbar and wanders.
-- **Interrupts only when it matters**: notifications for blocked tasks and questions only. Finished tasks turn gray; review is optional, with right-click accept or archive and a 6-second undo.
-- **Organized by project**: worktrees of one repository group together. Pin, color-label, rename, archive or block whole projects.
-- **Personal todos**: tick "Only me" to note something you do yourself, as To do, Doing or Done. Agents cannot see it.
-- **Light on context**: 3 MCP tools; a write returns a ~30-token receipt and a search returns 5 summaries by default.
-- **Keyboard friendly**: `Ctrl+Alt+K` to show, `Ctrl+Alt+N` to capture, and ↑↓ / Enter / A / E / `/` on the board.
-- **Looks good your way**: light, dark or system theme, 8 theme colors, Chinese or English UI, adjustable text size and opacity.
-- **Reliable local data**: SQLite with WAL handles several agents writing at once, optimistic locking prevents overwrites; one-click backup, an archive center and a work summary you can copy as Markdown.
-- **One-click setup**: on first launch, a card on the board connects every Agent client on your computer at once. Supports Codex, Claude Code, Cursor and four more, backing up files before writing the MCP config and tracking rules.
-- **In-app updates**: checks GitHub Releases, verifies the signature and backs up the database before installing.
+- **Agents track their own work**: tasks that change files appear automatically, with a goal, acceptance checks and plan steps. Plain Q&A is left out, and "don't track this" skips a task.
+- **See who is moving right now**: tasks with a recent report show a live "Advancing" animation in one of seven styles, such as a pulsing dot, a heartbeat or a spinning ring. Tasks that go quiet for too long turn "Idle" and drop out of the In progress count.
+- **Pixel desktop pets**: one pixel buddy per agent stands on the board and acts out its work, so you can tell at a glance who is waiting on you. [More below](#desktop-pets).
+- **Interrupts only when it matters**: you get notified only when a task is blocked or needs your input. Finished tasks turn gray; review is optional, with right-click accept or archive and a 6-second undo.
+- **Organized by project**: worktrees of one repository are grouped together. Pin, color-label, rename, archive or block whole projects.
+- **Personal todos**: tick "Only me" to note something you are doing yourself, as To do, Doing or Done. Agents never see it.
+- **Light on context**: just 3 MCP tools. A write returns a receipt of about 30 tokens, and a search returns 5 summaries by default.
+- **One-click setup**: on first launch, a card on the board connects every agent client on your computer at once. Codex, Claude Code, Cursor and four more are supported, and files are backed up before the MCP config and tracking rules are written.
+- **Quick to drive, nice to look at**: `Ctrl+Alt+K` to show, `Ctrl+Alt+N` to capture, ↑↓ / Enter / A / E / `/` on the board. Light, dark or system theme, 8 accent colors, Chinese or English UI, adjustable text size and opacity.
+- **Data you can rely on**: SQLite with WAL lets several agents write at once, and optimistic locking stops them from overwriting each other. One-click backup, an archive center and a work summary you can copy as Markdown. In-app updates verify the signature and back up the database before installing.
 
 <div align="center">
 <img src="docs/images/activity-en.gif" alt="Heartbeat activity animation" width="360" />
@@ -55,10 +57,10 @@ Everything stays on your machine. It never calls a model API, uploads nothing, a
 <img src="docs/images/pet-en.gif" alt="Pixel Agents standing on the board, one more wandering on the taskbar" width="560" />
 </div>
 
-- **Rides along with the board**: docked on the board's top edge by default and follows it when it moves or resizes. Drop a pet anywhere on the desktop and it stays there; drop it near the board's top edge and it docks again.
-- **Status at a glance**: pushes a step-count box while advancing and the box flashes when a step is done; an amber "?" and a wave when blocked or waiting for your input; a green check when done and waiting for review, and a jump when you accept; a card thrown up when a new task is registered; gray and dozing with nothing to do.
-- **One click away**: hover for the status and task title; click to bring up the board on that Agent's task.
-- **Right-click menu**: split Agents (one window each, dragged separately), pin in place, always on top (on by default), gravity mode (they drop onto the taskbar and wander, flying back to the board for 8 seconds when one needs you or finishes a task for review), and put back on the board.
+- **Status at a glance**: while advancing, a pet pushes a box showing its step count, and the box flashes when a step is done. An amber "?" and a wave mean it is blocked or needs your input. A green check means it is done and waiting for review, and it jumps when you accept. It tosses a card up when a new task is registered, and turns gray and dozes when there is nothing to do.
+- **Rides along with the board**: pets dock on the board's top edge by default and follow it when it moves or resizes. Drop one anywhere on the desktop and it stays there; drop it near the board's top edge and it docks again.
+- **One click away**: hover for the status and task title; click to bring up the board on that agent's task.
+- **Right-click menu**: split agents (one window each, placed separately), pin in place, always on top (on by default), gravity mode (they drop onto the taskbar and wander, flying back to the board for about 8 seconds when one needs you or finishes a task for review), and put back on the board.
 - **Easy to turn off**: Settings → Desktop → Desktop pet turns them off or shows just one.
 
 ## How it works
