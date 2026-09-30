@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
   "description": "Local board capture, feedback and user review. External HTTP(S) links use a validated Rust command; local files are never opened.",
-  "windows": ["main"],
+  "windows": ["main", "pet", "pet-*"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { archiveProject, archiveTask, compactWindow, dragWindow, renameProject, restoreTasks, setPersonalStatus, setProjectBlocked, undoAccept, hideWindow, listArchivedTasks, native, readClients, onError, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, readTrackingPaused, readWindowVisible, restoreArchivedTask, reviewTask, savePreferences, setTrackingPaused } from './bridge';
+import { archiveProject, archiveTask, compactWindow, dragWindow, renameProject, restoreTasks, setPersonalStatus, setProjectBlocked, undoAccept, hideWindow, listArchivedTasks, native, readClients, onError, onOpenTask, onQuickCreate, onVisibility, readPreferences, readRevision, readSnapshot, readTrackingPaused, readWindowVisible, restoreArchivedTask, reviewTask, savePreferences, setTrackingPaused } from './bridge';
 import { defaults, isTutorialProject, isTutorialTask, labels, type ArchivedTask, type CaptureInput, type ClientStatus, type Filter, type Preferences, type Project, type Snapshot, type Task, type TaskReceipt } from './types';
 import { awaitsReview, changedAt, inActiveList, isAdvancing, isStale, isWaiting, matchesFilter, matchesSearch, needsAttention, normalizeFilter, personalLabels, personalMoveDone, personalMoveLabels, personalMoves, personalMoveTarget, projectLabel, relativeTime, type PersonalMove, reviewLabels, stepProgress } from './display';
 import { Settings } from './Panels';
@@ -386,6 +386,11 @@ export function App() {
     });
     return () => { disposed = true; subscriptions.forEach(p => void p.then(unlisten => unlisten())); };
   }, [refresh, applySnapshot, applyPreferences, openCapture]);
+
+  // A click on a desktop pet brings the board up on the task that pet stands for.
+  const openFromPet = useRef<(id: number | null) => void>(() => {});
+  openFromPet.current = id => { if (preferencesRef.current.compact) void toggleCompact(); if (id !== null) setSelectedTaskId(id); };
+  useEffect(() => { const off = onOpenTask(id => openFromPet.current(id)); return () => void off.then(unlisten => unlisten()); }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

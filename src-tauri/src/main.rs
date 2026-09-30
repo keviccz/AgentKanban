@@ -2,6 +2,7 @@
 
 mod clients;
 mod integration;
+mod pet;
 mod preferences;
 mod task_actions;
 mod updates;
@@ -356,6 +357,10 @@ fn set_preferences(
     if next.english() != previous.english() {
         relabel_tray(window.app_handle(), next.english());
     }
+    if next.pet_enabled != previous.pet_enabled {
+        pet::sync(window.app_handle(), next.pet_enabled)?;
+    }
+    pet::broadcast(window.app_handle(), "preferences-changed", &next);
     Ok(next)
 }
 
@@ -889,6 +894,8 @@ fn run() -> tauri::Result<()> {
             let stay_in_tray =
                 prefs.start_hidden && std::env::args().any(|arg| arg == AUTOSTART_ARG);
             app.manage(updates::UpdateState::new(db.clone()));
+            app.manage(pet::PetState::load(&db));
+            let pet_enabled = prefs.pet_enabled;
             app.manage(AppState {
                 db,
                 preferences: Mutex::new(prefs),
@@ -967,6 +974,10 @@ fn run() -> tauri::Result<()> {
                 }
             });
             watch::spawn(app.handle().clone());
+            pet::spawn(app.handle().clone());
+            if let Err(err) = pet::sync(app.handle(), pet_enabled) {
+                eprintln!("Could not show the desktop pet: {err}");
+            }
             updates::spawn_auto_check(app.handle().clone());
             if !stay_in_tray {
                 window.show()?;
@@ -974,6 +985,13 @@ fn run() -> tauri::Result<()> {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if pet::is_pet(window.label()) {
+                // Pets come and go through Settings and the menu, not Alt+F4.
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                }
+                return;
+            }
             let Some(state) = window.try_state::<AppState>() else {
                 return;
             };
@@ -990,8 +1008,10 @@ fn run() -> tauri::Result<()> {
                         g.y = Some(position.y);
                         state.geometry_dirty.store(true, Ordering::SeqCst);
                     }
+                    pet::follow(window.app_handle());
                 }
                 tauri::WindowEvent::Resized(size) => {
+                    pet::follow(window.app_handle());
                     let compact = state.preferences.lock().map(|p| p.compact).unwrap_or(true);
                     if !compact && size.width > 0 && size.height > 0 {
                         if let (Ok(scale), Ok(mut g)) =
@@ -1051,7 +1071,16 @@ fn run() -> tauri::Result<()> {
             updates::get_update_status,
             updates::check_updates,
             updates::download_update,
-            updates::install_update
+            updates::install_update,
+            pet::pet_hello,
+            pet::pet_ready,
+            pet::pet_layout,
+            pet::pet_resize,
+            pet::pet_drag,
+            pet::pet_attention,
+            pet::pet_menu,
+            pet::pet_redock,
+            pet::pet_open
         ])
         .build(context)?;
     app.run(|app, event| {

@@ -1,0 +1,13 @@
+/* The desktop pet window: everything transparent except the pets themselves. */
+:root.pet-window, :root.pet-window body, :root.pet-window #root { background: transparent; color-scheme: normal; }
+
+.pet-stage { position: relative; height: 132px; user-select: none; -webkit-user-select: none; cursor: grab; overflow: hidden; }
+.pet-stage:active { cursor: grabbing; }
+.pet-slot { position: absolute; top: 0; width: 96px; height: 132px; }
+.pet-slot svg { display: block; }
+
+.pet-name { position: absolute; top: 50px; transform: translateX(-50%); max-width: 80px; padding: 1px 6px; border-radius: 999px; background: rgba(16, 22, 26, 0.72); color: #e8ebef; font-size: 10px; line-height: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+
+.pet-bubble { position: absolute; top: 4px; z-index: 1; width: max-content; max-width: 220px; padding: 5px 8px; border-radius: 8px; background: rgba(16, 22, 26, 0.9); color: #e8ebef; font-size: 11px; line-height: 15px; pointer-events: none; }
+.pet-bubble strong { display: block; font-weight: 600; }
+.pet-bubble span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: #abb4bf; overflow: hidden; overflow-wrap: anywhere; }

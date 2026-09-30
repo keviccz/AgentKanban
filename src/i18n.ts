@@ -535,6 +535,20 @@ const en: Record<string, string> = {
   '接入全部（{0}）': 'Connect all ({0})',
   '、': ', ',
 
+  // Desktop pet
+  '已完成，等你验收': 'Done, waiting for your review',
+  '暂时没有进行中的任务': 'Nothing in progress right now',
+  '桌宠': 'Desktop pet',
+  '显示桌宠': 'Show the desktop pet',
+  '像素 Agent 站在看板上方，演出任务进展；可拖到桌面任意位置，点击打开对应任务': 'Pixel Agents stand on top of the board and act out task progress. Drag them anywhere; click one to open its task',
+  '数量': 'How many',
+  '桌宠数量': 'Number of pets',
+  '每个 Agent 客户端一个': 'One per Agent client',
+  '始终只显示一个': 'Always just one',
+  '位置': 'Position',
+  '拖到看板上沿附近松手也会吸附回去': 'Dropping it near the top of the board also snaps it back',
+  '吸附回看板': 'Put back on the board',
+
   // Status labels from types.ts
   '待办': 'To do',
   '受阻': 'Blocked',

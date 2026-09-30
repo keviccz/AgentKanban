@@ -55,6 +55,10 @@ pub(crate) struct Preferences {
     pub project_colors: BTreeMap<String, String>,
     /// The board's "connect your Agent" card was closed; setup stays in Settings.
     pub agent_guide_dismissed: bool,
+    /// Pixel Agents in their own small window on the board's top edge.
+    pub pet_enabled: bool,
+    /// "per_agent": one pet per Agent client; "single": one pet for the whole board.
+    pub pet_mode: String,
 }
 
 impl Default for Preferences {
@@ -87,6 +91,8 @@ impl Default for Preferences {
             accent: "teal".into(),
             agent_guide_dismissed: false,
             project_colors: BTreeMap::new(),
+            pet_enabled: true,
+            pet_mode: "per_agent".into(),
         }
     }
 }
@@ -122,6 +128,7 @@ impl Preferences {
             .contains(&self.activity_style.as_str())
             || ![10, 30, 60].contains(&self.activity_minutes)
             || !ACCENTS.contains(&self.accent.as_str())
+            || !["per_agent", "single"].contains(&self.pet_mode.as_str())
             || self.project_colors.len() > 500
             || self.project_colors.iter().any(|(id, color)| {
                 !id.parse::<i64>().is_ok_and(|id| id > 0)
@@ -208,6 +215,8 @@ mod tests {
         assert_eq!((prefs.font_scale, prefs.opacity), (100, 100));
         assert!(prefs.auto_check_updates);
         assert!(!prefs.auto_download_updates);
+        assert!(prefs.pet_enabled);
+        assert_eq!(prefs.pet_mode, "per_agent");
         prefs.validate().unwrap();
     }
 
@@ -262,6 +271,24 @@ mod tests {
         assert_eq!(prefs.stale_after_hours, 24);
         assert!(Preferences {
             filter: "accepted".into(),
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn pet_mode_accepts_only_known_choices() {
+        for mode in ["per_agent", "single"] {
+            Preferences {
+                pet_mode: mode.into(),
+                ..Default::default()
+            }
+            .validate()
+            .unwrap();
+        }
+        assert!(Preferences {
+            pet_mode: "many".into(),
             ..Default::default()
         }
         .validate()

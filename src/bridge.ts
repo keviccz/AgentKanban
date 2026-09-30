@@ -64,3 +64,31 @@ export const onUpdateStatus = (callback: (status: UpdateStatus) => void) => nati
 export const readSyncHealth = (): Promise<SyncHealth> => invoke('get_sync_health');
 export const listArchivedTasks = (input: ArchiveQuery): Promise<ArchivePage> => invoke('list_archived_tasks', { input });
 export const restoreArchivedTask = (id: number, expected_updated_at: string): Promise<TaskReceipt> => invoke('restore_archived_task', { input: { id, expected_updated_at } });
+// Desktop pet window (src/pet). Browser previews use ?pet with the demo board.
+export const onPreferencesChanged = (callback: (preferences: Preferences) => void) => native ? listen<Preferences>('preferences-changed', e => callback(e.payload)) : Promise.resolve(() => {});
+export const onPetDropped = (callback: (docked: boolean) => void) => native ? listen<boolean>('pet-dropped', e => callback(e.payload)) : Promise.resolve(() => {});
+export const onOpenTask = (callback: (taskId: number | null) => void) => native ? listen<number | null>('open-task', e => callback(e.payload)) : Promise.resolve(() => {});
+export const petResize = (width: number): Promise<void> => native ? invoke('pet_resize', { width }) : Promise.resolve();
+export const petRedock = (): Promise<void> => invoke('pet_redock');
+export const petOpen = (taskId: number | null): Promise<void> => native ? invoke('pet_open', { taskId }) : Promise.resolve();
+export interface PetOptions { split: boolean; pinned: boolean; on_top: boolean; gravity: boolean }
+export interface PetMotion { state: 'still' | 'fall' | 'walk' | 'idle' | 'glide'; dir: 1 | -1 }
+export type PetAction = 'split' | 'merge' | 'pin' | 'unpin' | 'top' | 'untop' | 'gravity' | 'float';
+const previewParams = new URLSearchParams(location.search);
+/** This window's Agent ('' merged), the options and how it is moving. ?petmotion=walk previews moves. */
+export const petHello = (): Promise<{ key: string; options: PetOptions; motion: PetMotion }> => native ? invoke('pet_hello') : Promise.resolve({
+  key: previewParams.get('petkey') ?? '',
+  options: { split: false, pinned: false, on_top: true, gravity: previewParams.has('petmotion') },
+  motion: { state: (previewParams.get('petmotion') ?? 'still') as PetMotion['state'], dir: previewParams.get('petdir') === '-1' ? -1 : 1 },
+});
+/** The page has drawn its pets: Rust shows the (so far hidden) window. */
+export const petReady = (): Promise<void> => native ? invoke('pet_ready') : Promise.resolve();
+export const petLayout = (keys: string[]): Promise<void> => native ? invoke('pet_layout', { keys }) : Promise.resolve();
+/** Starts dragging the pet window; false when the pets are pinned. */
+export const petDrag = (): Promise<boolean> => native ? invoke('pet_drag') : Promise.resolve(false);
+export const petAttention = (): Promise<void> => native ? invoke('pet_attention') : Promise.resolve();
+export const petMenu = (): Promise<void> => native ? invoke('pet_menu') : Promise.resolve();
+export const onPetOptions = (callback: (options: PetOptions) => void) => native ? listen<PetOptions>('pet-options', e => callback(e.payload)) : Promise.resolve(() => {});
+export const onPetMotion = (callback: (motion: PetMotion) => void) => native ? listen<PetMotion>('pet-motion', e => callback(e.payload)) : Promise.resolve(() => {});
+export const onPetAction = (callback: (action: PetAction) => void) => native ? listen<PetAction>('pet-action', e => callback(e.payload)) : Promise.resolve(() => {});
+export const windowLabel = () => native ? getCurrentWindow().label : new URLSearchParams(location.search).has('pet') ? 'pet' : 'main';

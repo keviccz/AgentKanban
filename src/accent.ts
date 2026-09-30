@@ -17,6 +17,9 @@ const palette: Record<Exclude<Accent, 'teal'>, { light: string; dark: string }> 
   graphite: { light: '#475261', dark: '#b8c2ce' },
 };
 
+/** The accent as drawn on a dark background (the desktop pet's body color). */
+export const accentOnDark = (accent: Accent) => accent === 'teal' || !palette[accent] ? '#64d4d6' : palette[accent].dark;
+
 /** Swatch color shown in Settings, independent of the current theme. */
 export const swatch = (accent: Accent) => accent === 'teal' ? '#007f89' : palette[accent].light;
 

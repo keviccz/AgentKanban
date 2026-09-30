@@ -34,6 +34,7 @@ Everything stays on your machine. It never calls a model API, uploads nothing, a
 
 - **Agents track themselves**: tasks that change files show up automatically with a goal, acceptance checks and plan steps. Plain Q&A is skipped; say "don't track this" to skip a task.
 - **See who is moving right now**: tasks with a recent report show a live "Advancing" animation, in seven styles such as pulsing dot, heartbeat and spinning ring. Tasks with no report for too long show "Idle" and leave the In progress count.
+- **Pixel Agent desktop pets**: one pixel buddy per Agent stands on top of the board and acts out the work: it pushes a step-count box while advancing, raises a "?" when it needs you, shows a green check when done and jumps when you accept. Drag it anywhere, click it to open its task, or right-click to split, pin, keep on top, or turn on gravity so it drops onto the taskbar and wanders.
 - **Interrupts only when it matters**: notifications for blocked tasks and questions only. Finished tasks turn gray; review is optional, with right-click accept or archive and a 6-second undo.
 - **Organized by project**: worktrees of one repository group together. Pin, color-label, rename, archive or block whole projects.
 - **Personal todos**: tick "Only me" to note something you do yourself, as To do, Doing or Done. Agents cannot see it.
@@ -47,6 +48,18 @@ Everything stays on your machine. It never calls a model API, uploads nothing, a
 <div align="center">
 <img src="docs/images/activity-en.gif" alt="Heartbeat activity animation" width="360" />
 </div>
+
+## Desktop pets
+
+<div align="center">
+<img src="docs/images/pet-en.gif" alt="Pixel Agents standing on the board, one more wandering on the taskbar" width="560" />
+</div>
+
+- **Rides along with the board**: docked on the board's top edge by default and follows it when it moves or resizes. Drop a pet anywhere on the desktop and it stays there; drop it near the board's top edge and it docks again.
+- **Status at a glance**: pushes a step-count box while advancing and the box flashes when a step is done; an amber "?" and a wave when blocked or waiting for your input; a green check when done and waiting for review, and a jump when you accept; a card thrown up when a new task is registered; gray and dozing with nothing to do.
+- **One click away**: hover for the status and task title; click to bring up the board on that Agent's task.
+- **Right-click menu**: split Agents (one window each, dragged separately), pin in place, always on top (on by default), gravity mode (they drop onto the taskbar and wander, flying back to the board for 8 seconds when one needs you or finishes a task for review), and put back on the board.
+- **Easy to turn off**: Settings → Desktop → Desktop pet turns them off or shows just one.
 
 ## How it works
 

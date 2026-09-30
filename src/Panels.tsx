@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { backupDatabase, checkMcp, dragWindow, native, readBlockedProjects, setProjectBlocked, readClients, readDesktopSettings, readIntegrationInfo, revealPath, setAutostart, setShortcut, setupClient } from './bridge';
+import { backupDatabase, checkMcp, dragWindow, native, readBlockedProjects, setProjectBlocked, readClients, readDesktopSettings, readIntegrationInfo, petRedock, revealPath, setAutostart, setShortcut, setupClient } from './bridge';
 import { type BlockedProject, type ClientStatus, type DesktopSettings, type IntegrationInfo, type McpCheck, type Preferences } from './types';
 import codexRule from '../examples/codex-AGENTS-snippet.md?raw';
 import harmonyLicense from './fonts/HarmonyOS-Sans-LICENSE.txt?raw';
@@ -229,6 +229,11 @@ export function Settings({ preferences, busy, disabled, saveError, initialTab = 
         <section className="settings-section"><h3>{t("Agent 推进提示")}</h3>
           <label className="setting-row"><span>{t("动效")}<small className="activity-sample" aria-hidden="true"><span className="status in_progress advancing"><span className="status-dot" /><ActivityLabel /><ActivityMark /></span></small></span><select aria-label={t("推进动效")} value={preferences.activity_style} disabled={disabled} onChange={event => update({ activity_style: ACTIVITY_STYLES.find(style => style === event.target.value) ?? 'pulse' })}>{ACTIVITY_STYLES.map(style => <option key={style} value={style}>{t(activityLabels[style])}</option>)}</select></label>
           <label className="setting-row"><span>{t("判定为推进中")}<small>{t("进行中，且 Agent 在此时间内有上报")}</small></span><select aria-label={t("判定为推进中")} value={preferences.activity_minutes} disabled={disabled || preferences.activity_style === 'off'} onChange={event => update({ activity_minutes: Number(event.target.value) })}>{[10, 30, 60].map(minutes => <option key={minutes} value={minutes}>{t("{0} 分钟内", minutes)}</option>)}</select></label>
+        </section>
+        <section className="settings-section"><h3>{t("桌宠")}</h3>
+          <label className="setting-row"><span>{t("显示桌宠")}<small>{t("像素 Agent 站在看板上方，演出任务进展；可拖到桌面任意位置，点击打开对应任务")}</small></span><input type="checkbox" checked={preferences.pet_enabled} disabled={disabled} onChange={event => update({ pet_enabled: event.target.checked })} /></label>
+          <label className="setting-row"><span>{t("数量")}</span><select aria-label={t("桌宠数量")} value={preferences.pet_mode} disabled={disabled || !preferences.pet_enabled} onChange={event => update({ pet_mode: event.target.value === 'single' ? 'single' : 'per_agent' })}><option value="per_agent">{t("每个 Agent 客户端一个")}</option><option value="single">{t("始终只显示一个")}</option></select></label>
+          <div className="setting-row"><span>{t("位置")}<small>{t("拖到看板上沿附近松手也会吸附回去")}</small></span><button className="text-button" disabled={!native || !preferences.pet_enabled} onClick={() => void petRedock().catch(e => setError(String(e)))}>{t("吸附回看板")}</button></div>
         </section>
         <section className="settings-section"><h3>{t("随时查看")}</h3>
           <label className="setting-row"><span>{t("登录 Windows 时启动")}</span><input type="checkbox" checked={desktop?.autostart_enabled ?? false} disabled={!desktop || working || Boolean(desktop.autostart_error)} onChange={event => void toggle('autostart', event.target.checked)} /></label>
