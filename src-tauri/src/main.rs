@@ -789,12 +789,21 @@ fn run() -> tauri::Result<()> {
     // Build the window below so the WebView builder can use an absolute data path.
     // WindowConfig.data_directory only accepts a relative path under Tauri's own cache.
     context.config_mut().app.windows[0].create = false;
+    // wry's defaults, plus a small HTTP cache: the pages are bundled, so caching them on
+    // disk only grows the data folder. Pet windows reuse these args (one WebView2 environment).
+    context.config_mut().app.windows[0].additional_browser_args = Some(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disk-cache-size=4194304"
+            .into(),
+    );
     // Opt-in local WebView QA only. This branch is absent from release builds.
     #[cfg(debug_assertions)]
     if let Ok(port) = std::env::var("AGENTKANBAN_DEBUG_PORT") {
         if let Ok(port) = port.parse::<u16>() {
-            context.config_mut().app.windows[0].additional_browser_args =
-                Some(format!("--remote-debugging-port={port}"));
+            let args = &mut context.config_mut().app.windows[0].additional_browser_args;
+            *args = Some(format!(
+                "{} --remote-debugging-port={port}",
+                args.as_deref().unwrap_or_default()
+            ));
             // An explicit QA data directory gets a separate single-instance and
             // autostart identity, so native tests never activate the user's board.
             if std::env::var_os("AGENTKANBAN_DATA_DIR").is_some_and(|dir| !dir.is_empty()) {
@@ -989,6 +998,9 @@ fn run() -> tauri::Result<()> {
                 // Pets come and go through Settings and the menu, not Alt+F4.
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                }
+                if let tauri::WindowEvent::ScaleFactorChanged { .. } = event {
+                    pet::scale_changed(window);
                 }
                 return;
             }
