@@ -48,6 +48,8 @@ export interface Preferences {
   agent_guide_dismissed: boolean;
   /** Pixel Agents in their own window on the board's top edge. */
   pet_enabled: boolean; pet_mode: 'per_agent' | 'single';
+  /** "terminal": each pet wears its terminal's colors; "accent": theme color, terminal badge only. */
+  pet_look: 'terminal' | 'accent';
 }
 export const defaults: Preferences = {
   theme: 'light', always_on_top: true, compact: false, concise: false, filter: 'all',
@@ -60,7 +62,7 @@ export const defaults: Preferences = {
   language: 'auto',
   activity_style: 'pulse', activity_minutes: 30,
   notify_done: false, accent: 'teal', project_colors: {}, agent_guide_dismissed: false,
-  pet_enabled: true, pet_mode: 'per_agent',
+  pet_enabled: true, pet_mode: 'per_agent', pet_look: 'terminal',
 };
 export interface IntegrationInfo {
   app_version: string; mcp_path: string; mcp_exists: boolean; database_path: string;

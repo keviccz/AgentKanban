@@ -4,6 +4,7 @@ import { accentOnDark } from '../accent';
 import { resolveLanguage, setLanguage, t } from '../i18n';
 import { defaults, type Preferences, type Snapshot } from '../types';
 import { agentRects, digits, digitsWidth, glyph, OK_GLYPH, Z_GLYPH, type Legs, type Pose, type Rect } from './pixel';
+import { looksFor, type Look } from './look';
 import { derivePets, diffEvents, EVENT_SECONDS, marksOf, type PetEvent, type PetEventKind, type PetView, type TaskMark } from './model';
 import './pet.css';
 
@@ -60,20 +61,26 @@ interface Frame {
   action?: Played;
   pinned: boolean;
   accent: string;
+  /** The pet's terminal; `terminal` dresses the whole pet in it, otherwise only the badge. */
+  look?: Look;
+  terminal: boolean;
   paused: boolean;
   seed: number;
 }
 
 /** Pose plus the props around the pet (box, card, sparkles, pin), for one frame. */
 function scene(pet: PetView, f: Frame): { pose: Pose; extra: Rect[] } {
-  const { time, event, accent } = f;
+  const { time, event } = f;
   const extra: Rect[] = [];
   const at = (fps: number) => Math.floor(time * fps + f.seed);
   const grey = f.paused || pet.mood === 'resting';
-  const color = grey ? GREY : accent;
+  // Dressed pets keep their colors at rest (they fade instead): grey would hide which is which.
+  const dressed = f.terminal ? f.look : undefined;
+  const accent = dressed?.color ?? f.accent;
+  const color = dressed ? dressed.color : grey ? GREY : accent;
   const airborne = f.motion.state === 'fall' || f.motion.state === 'glide';
   const walking = f.motion.state === 'walk';
-  let pose: Pose = { color, dot: color, dotOn: true };
+  let pose: Pose = { color, body: dressed?.body, mark: f.look?.mark, dot: color, dotOn: true };
   if (f.lifted) return { pose: { ...pose, legs: at(12) % 2 ? 'a' : 'b', armL: 'up', armR: 'up', face: 'up' }, extra };
   if (airborne) return { pose: { ...pose, legs: 'tuck', armL: 'up', armR: 'up', face: 'up', dot: pet.mood === 'needs' ? AMBER : color }, extra: f.pinned ? pinRects(X - 8, FEET - 19) : [] };
   const blink = (time + f.seed) % 4.2 < 0.12;
@@ -97,7 +104,7 @@ function scene(pet: PetView, f: Frame): { pose: Pose; extra: Rect[] } {
       // Waiting and resting: dozing, with a "z" drifting up.
       pose = { ...pose, face: 'sleep', sink: true, dotOn: false };
       const k = ((time + f.seed) % 2.4) / 2.4;
-      extra.push(...glyph(Z_GLYPH, X + 6 + Math.round(k * 2), FEET - 20 - Math.round(k * 6), color, 1 - k));
+      extra.push(...glyph(Z_GLYPH, X + 8 + Math.round(k * 2), FEET - 20 - Math.round(k * 6), color, 1 - k));
     }
   }
   if (walking) {
@@ -307,6 +314,9 @@ export function PetApp() {
     void (key ? Promise.resolve() : petResize(width)).catch(() => {}).then(() => petReady()).catch(() => {});
   });
   const accent = accentOnDark(preferences.accent);
+  const terminal = preferences.pet_look === 'terminal';
+  const looks = looksFor(all.map(pet => pet.name));
+  const lookOf = (name: string) => name ? looks.get(name) ?? looksFor([name]).get(name) : undefined;
 
   const play = (kind: Action) => setAction({ kind, at: clock() });
   const onMove = (event: ReactMouseEvent) => {
@@ -333,7 +343,9 @@ export function PetApp() {
     </div>}
     {pets.map((pet, index) => {
       const event = [...live].reverse().find(item => key === 'board' || preferences.pet_mode === 'single' || item.agent === pet.key);
-      const { pose, extra } = scene(pet, { time, event, lifted, dropAge: time - droppedAt, landAge: time - landedAt, motion, action, pinned: options.pinned, accent, paused, seed: seedOf(pet.key) });
+      const look = lookOf(pet.name);
+      const { pose, extra } = scene(pet, { time, event, lifted, dropAge: time - droppedAt, landAge: time - landedAt, motion, action, pinned: options.pinned, accent, look, terminal, paused, seed: seedOf(pet.key) });
+      const faded = terminal && look && (paused || pet.mood === 'resting');
       const label = pet.name === '教学示例' ? t(pet.name) : pet.name;
       return <div key={pet.key} className="pet-slot" style={{ left: 8 + index * SLOT }}
         onMouseEnter={() => setHover(pet.key)}
@@ -341,7 +353,7 @@ export function PetApp() {
         onMouseUp={event => { if (event.button === 0 && pressed.current) { const taskId = pressed.current.taskId; pressed.current = null; void petOpen(taskId).catch(() => {}); } }}>
         {label && <span className="pet-name" style={{ left: SLOT / 2 - 4 }}>{label}</span>}
         <svg width={SLOT} height={HEIGHT} viewBox={`0 0 ${COLS} ${ROWS}`} shapeRendering="crispEdges" aria-hidden="true">
-          <g transform={`translate(${X} ${FEET})`}>{agentRects(pose).map(([x, y, w, h, c, o], i) => <rect key={i} x={x} y={y} width={w} height={h} fill={c} opacity={o} />)}</g>
+          <g transform={`translate(${X} ${FEET})`} opacity={faded ? 0.6 : undefined}>{agentRects(pose).map(([x, y, w, h, c, o], i) => <rect key={i} x={x} y={y} width={w} height={h} fill={c} opacity={o} />)}</g>
           {extra.map(([x, y, w, h, c, o], i) => <rect key={`e${i}`} x={x} y={y} width={w} height={h} fill={c} opacity={o} />)}
         </svg>
       </div>;

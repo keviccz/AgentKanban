@@ -59,6 +59,8 @@ pub(crate) struct Preferences {
     pub pet_enabled: bool,
     /// "per_agent": one pet per Agent client; "single": one pet for the whole board.
     pub pet_mode: String,
+    /// "terminal": pets wear their terminal's colors; "accent": theme color with a terminal badge.
+    pub pet_look: String,
 }
 
 impl Default for Preferences {
@@ -93,6 +95,7 @@ impl Default for Preferences {
             project_colors: BTreeMap::new(),
             pet_enabled: true,
             pet_mode: "per_agent".into(),
+            pet_look: "terminal".into(),
         }
     }
 }
@@ -129,6 +132,7 @@ impl Preferences {
             || ![10, 30, 60].contains(&self.activity_minutes)
             || !ACCENTS.contains(&self.accent.as_str())
             || !["per_agent", "single"].contains(&self.pet_mode.as_str())
+            || !["terminal", "accent"].contains(&self.pet_look.as_str())
             || self.project_colors.len() > 500
             || self.project_colors.iter().any(|(id, color)| {
                 !id.parse::<i64>().is_ok_and(|id| id > 0)
@@ -217,6 +221,7 @@ mod tests {
         assert!(!prefs.auto_download_updates);
         assert!(prefs.pet_enabled);
         assert_eq!(prefs.pet_mode, "per_agent");
+        assert_eq!(prefs.pet_look, "terminal");
         prefs.validate().unwrap();
     }
 
@@ -289,6 +294,24 @@ mod tests {
         }
         assert!(Preferences {
             pet_mode: "many".into(),
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn pet_look_accepts_only_known_choices() {
+        for look in ["terminal", "accent"] {
+            Preferences {
+                pet_look: look.into(),
+                ..Default::default()
+            }
+            .validate()
+            .unwrap();
+        }
+        assert!(Preferences {
+            pet_look: "brand".into(),
             ..Default::default()
         }
         .validate()

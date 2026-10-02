@@ -63,6 +63,7 @@ export function demoPreferences(): Preferences {
     concise: params.has('concise'),
     accent: (accent ?? 'teal') as Preferences['accent'],
     activity_style: (activity ?? 'pulse') as Preferences['activity_style'],
+    pet_look: params.get('petlook') === 'accent' ? 'accent' : 'terminal',
     project_colors: { 1: 'blue', 2: 'green' },
     pinned_projects: [1],
   };

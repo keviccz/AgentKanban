@@ -54,6 +54,10 @@ const shade = (hex: string, k: number) => '#' + [1, 3, 5].map(i => Math.round(pa
 
 export type Pose = {
   color: string;
+  /** Legs, torso and arms; a shade of `color` when absent. */
+  body?: string;
+  /** Terminal badge above the head's right corner (see look.ts). */
+  mark?: { rows: string[]; colors: Record<string, string> };
   face?: Face;
   look?: number;
   glyph?: string;
@@ -70,7 +74,7 @@ export type Pose = {
 };
 
 export function agentRects(p: Pose): Rect[] {
-  const body = shade(p.color, 0.42);
+  const body = p.body ?? shade(p.color, 0.42);
   const y = -(p.bob ?? 0) + (p.sink ? 1 : 0);
   const out: Rect[] = [];
   const at = (dx: number, dy: number, w: number, h: number, c: string, o?: number) => out.push([dx, y + dy, w, h, c, o]);
@@ -103,6 +107,15 @@ export function agentRects(p: Pose): Rect[] {
     case 'ok': out.push(...glyph(GLYPHS.ok, -4, gy + 2, gc)); break;
   }
   if (p.dot) at(-1, -18, 2, 2, p.dot, p.dotOn === false ? 0.25 : 1);
+  // The badge stands on the head's top edge, right of the status light, with a drop
+  // shadow so light badges still read on a light wallpaper.
+  if (p.mark) {
+    const { rows, colors } = p.mark;
+    const top = -15 - rows.length;
+    const pixels = rows.flatMap((row, j) => [...row].flatMap((ch, i) => (colors[ch] ? [[2 + i, top + j, colors[ch]] as const] : [])));
+    for (const [x, py] of pixels) at(x + 1, py + 1, 1, 1, '#000000', 0.4);
+    for (const [x, py, c] of pixels) at(x, py, 1, 1, c);
+  }
   if (p.carry) {
     at(-8, -21, 16, 6, PAPER);
     at(-6, -19, 9, 1, INK_DARK);
