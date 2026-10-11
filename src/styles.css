@@ -419,27 +419,32 @@ button, .task-open, select, input, textarea { transition: background-color .14s 
 /* Agent activity: one of several styles, chosen in Settings (data-activity on .app). */
 .status:is(.advancing, .idle) .status-dot { position: relative; }
 .activity-dots { display: none; align-items: flex-end; gap: 2px; margin-left: 1px; height: 8px; }
-.activity-dots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: activity-bounce 1.2s ease-in-out infinite; }
-.activity-dots i:nth-child(2) { animation-delay: .15s; }
-.activity-dots i:nth-child(3) { animation-delay: .3s; }
-[data-activity="pulse"] .status.advancing .status-dot::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; background: currentColor; animation: activity-pulse 1.6s ease-out infinite; }
+/* All activity loops tick in steps (~10-14 changes/s) and only move transform, opacity or clip-path:
+   smooth curves would repaint at the monitor's full refresh rate, even with the board hidden. */
+.activity-dots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: activity-bounce 1.2s steps(4) infinite; }
+.activity-dots i:nth-child(2) { animation-delay: .18s; }
+.activity-dots i:nth-child(3) { animation-delay: .36s; }
+[data-activity="pulse"] .status.advancing .status-dot::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; background: currentColor; animation: activity-pulse 1.6s steps(16) infinite; }
 [data-activity="dots"] .activity-dots { display: inline-flex; }
 [data-activity="dots"] .project-activity .status-dot { display: none; }
 .task-advancing, .task-idle { position: relative; }
-[data-activity="flow"] .task-advancing::before, [data-activity="flow"] .activity-sample .status::before { content: ''; position: absolute; left: 0; top: 12px; bottom: 12px; width: 2px; border-radius: 2px; background: linear-gradient(to bottom, transparent 0%, var(--teal) 50%, transparent 100%) 0 0 / 100% 200% no-repeat, color-mix(in srgb, var(--teal) 16%, transparent); animation: activity-flow 1.8s linear infinite; }
+[data-activity="flow"] .task-advancing::before, [data-activity="flow"] .activity-sample .status::before { content: ''; position: absolute; left: 0; top: 12px; bottom: 12px; width: 2px; border-radius: 2px; background: color-mix(in srgb, var(--teal) 16%, transparent); }
+[data-activity="flow"] .task-advancing::after, [data-activity="flow"] .activity-sample .status::after { content: ''; position: absolute; left: 0; top: 12px; bottom: 12px; width: 2px; border-radius: 2px; background: linear-gradient(to bottom, transparent 0%, var(--teal) 50%, transparent 100%); animation: activity-flow 1.8s steps(9) infinite; }
 [data-activity="flow"] .activity-sample .status { position: relative; padding-left: 8px; }
-[data-activity="flow"] .activity-sample .status::before { top: 1px; bottom: 1px; }
+[data-activity="flow"] .activity-sample .status::before, [data-activity="flow"] .activity-sample .status::after { top: 1px; bottom: 1px; }
 .project-activity { margin-left: 0; font-size: 0; gap: 0; }
 .project-activity .status-dot { width: 7px; height: 7px; }
-[data-activity="flow"] .project-activity .status-dot { width: 14px; height: 2px; border-radius: 2px; background: linear-gradient(to right, transparent 0%, currentColor 50%, transparent 100%) 0 0 / 200% 100% no-repeat, color-mix(in srgb, currentColor 22%, transparent); animation: activity-flow-x 1.8s linear infinite; }
+[data-activity="flow"] .project-activity .status-dot { width: 14px; height: 2px; border-radius: 2px; background: color-mix(in srgb, currentColor 22%, transparent); }
+[data-activity="flow"] .project-activity .status-dot::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(to right, transparent 0%, currentColor 50%, transparent 100%); animation: activity-flow-x 1.8s steps(9) infinite; }
 .strip-ongoing { display: inline-flex; align-items: center; gap: 6px; }
 .strip-ongoing .project-activity { line-height: 1; }
 .activity-sample { display: inline-flex; margin-top: 4px; }
 .activity-sample .status { margin-left: 0; }
 @keyframes activity-pulse { from { transform: scale(.45); opacity: .55; } to { transform: scale(1.5); opacity: 0; } }
 @keyframes activity-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-3px); opacity: 1; } }
-@keyframes activity-flow { from { background-position: 0 -100%, 0 0; } to { background-position: 0 200%, 0 0; } }
-@keyframes activity-flow-x { from { background-position: -100% 0, 0 0; } to { background-position: 200% 0, 0 0; } }
+/* Flow: the highlight slides along its track, clipped to the track as it goes. */
+@keyframes activity-flow { from { transform: translateY(-100%); clip-path: inset(100% 0 0 0); } 50% { transform: none; clip-path: inset(0); } to { transform: translateY(100%); clip-path: inset(0 0 100% 0); } }
+@keyframes activity-flow-x { from { transform: translateX(-100%); clip-path: inset(0 0 0 100%); } 50% { transform: none; clip-path: inset(0); } to { transform: translateX(100%); clip-path: inset(0 100% 0 0); } }
 
 /* Dots and flow carry the motion themselves; the status dot would only compete. */
 [data-activity="dots"] .status:is(.advancing, .idle):not(.project-activity) > .status-dot,
@@ -447,23 +452,23 @@ button, .task-open, select, input, textarea { transition: background-color .14s 
 [data-activity="flow"] .status:is(.advancing, .idle):not(.project-activity) > .status-dot { display: none; }
 
 /* Spinning ring: an open arc circles the dot. */
-[data-activity="orbit"] .status:is(.advancing, .idle) .status-dot::after { content: ''; position: absolute; inset: -3.5px; border-radius: 50%; border: 1.5px solid currentColor; border-right-color: transparent; border-bottom-color: transparent; animation: activity-spin .9s linear infinite; }
+[data-activity="orbit"] .status:is(.advancing, .idle) .status-dot::after { content: ''; position: absolute; inset: -3.5px; border-radius: 50%; border: 1.5px solid currentColor; border-right-color: transparent; border-bottom-color: transparent; animation: activity-spin .9s steps(12) infinite; }
 /* Heartbeat: a small trace draws itself again and again. */
-.activity-wave { display: none; width: 18px; height: 9px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 34; animation: activity-trace 2.2s linear infinite; }
+.activity-wave { display: none; width: 18px; height: 9px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; animation: activity-trace 2.2s steps(22) infinite; }
 [data-activity="wave"] .activity-wave { display: inline-block; }
 /* Text shimmer: a highlight sweeps across the label. */
-[data-activity="shimmer"] .activity-label { background: linear-gradient(100deg, var(--teal) 35%, color-mix(in srgb, var(--teal) 30%, white) 50%, var(--teal) 65%) 0 0 / 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: activity-shimmer 2s linear infinite; }
+[data-activity="shimmer"] .activity-label { background: linear-gradient(100deg, var(--teal) 35%, color-mix(in srgb, var(--teal) 30%, white) 50%, var(--teal) 65%) 0 0 / 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: activity-shimmer 2s steps(20) infinite; }
 /* Card glow: the whole card breathes a faint tint. */
-[data-activity="glow"] .task-advancing > .task-open, [data-activity="glow"] .activity-sample .status { animation: activity-glow 2.4s ease-in-out infinite; }
+[data-activity="glow"] .task-advancing > .task-open, [data-activity="glow"] .activity-sample .status { animation: activity-glow 2.4s steps(12) infinite; }
 [data-activity="glow"] .activity-sample .status { padding: 1px 6px; border-radius: 4px; }
-[data-activity="shimmer"] .project-activity .status-dot, [data-activity="glow"] .project-activity .status-dot { animation: activity-breathe 1.8s ease-in-out infinite; }
+[data-activity="shimmer"] .project-activity .status-dot, [data-activity="glow"] .project-activity .status-dot { animation: activity-breathe 1.8s steps(9) infinite; }
 /* Idle: in progress, but no report within the activity window. Same shape, held still. */
 .status.idle .activity-dots i, .status.idle .activity-wave, .status.idle .status-dot::after { animation: none; }
 .status.idle .activity-dots i { opacity: .55; }
 .status.idle { opacity: .8; }
 [data-activity="flow"] .task-idle::before { content: ''; position: absolute; left: 0; top: 12px; bottom: 12px; width: 2px; border-radius: 2px; background: color-mix(in srgb, var(--teal) 40%, transparent); }
 @keyframes activity-spin { to { transform: rotate(360deg); } }
-@keyframes activity-trace { from { stroke-dashoffset: 34; } 70%, to { stroke-dashoffset: 0; } }
+@keyframes activity-trace { from { clip-path: inset(-2px 100% -2px -2px); } 70%, to { clip-path: inset(-2px); } }
 @keyframes activity-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @keyframes activity-glow { 0%, 100% { background-color: transparent; } 50% { background-color: color-mix(in srgb, var(--teal) 9%, transparent); } }
 @keyframes activity-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }

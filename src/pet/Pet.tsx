@@ -10,7 +10,7 @@ import './pet.css';
 
 // A desktop pet window: pixel Agents acting out the board. Merged, one window shows every
 // pet; split, each window shows the one Agent Rust assigned it. Sizes are logical pixels;
-// the pets are drawn on a 3px grid and move on their own 12 fps clock. Rust moves the
+// the pets are drawn on a 3px grid and move on their own clock: 12 fps, 4 when calm. Rust moves the
 // window itself (docking, dragging, gravity) and tells us how it is moving.
 
 const U = 3;
@@ -35,12 +35,25 @@ interface Played { kind: Action; at: number }
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const clock = () => performance.now() / 1000;
 
-function useClock() {
+/** Frames per second during reactions; walking and working pets step at 8, dozing ones need few. */
+const LIVELY_FPS = 12;
+const STEADY_FPS = 8;
+const CALM_FPS = 4;
+
+function useClock(fps: number) {
   const [time, setTime] = useState(clock);
   useEffect(() => {
-    const id = window.setInterval(() => setTime(clock()), reduceMotion() ? 1000 : 1000 / 12);
-    return () => window.clearInterval(id);
-  }, []);
+    let id: number | undefined;
+    // A hidden window draws nothing, so its clock stops.
+    const run = () => {
+      window.clearInterval(id);
+      id = document.hidden ? undefined : window.setInterval(() => setTime(clock()), reduceMotion() ? 1000 : 1000 / fps);
+      if (!document.hidden) setTime(clock());
+    };
+    run();
+    document.addEventListener('visibilitychange', run);
+    return () => { window.clearInterval(id); document.removeEventListener('visibilitychange', run); };
+  }, [fps]);
   return time;
 }
 
@@ -230,7 +243,8 @@ export function PetApp() {
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const motionRef = useRef(motion);
-  const time = useClock();
+  const [fps, setFps] = useState(LIVELY_FPS);
+  const time = useClock(fps);
   setLanguage(resolveLanguage(preferences.language));
 
   useEffect(() => {
@@ -313,6 +327,15 @@ export function PetApp() {
     shown.current = true;
     void (key ? Promise.resolve() : petResize(width)).catch(() => {}).then(() => petReady()).catch(() => {});
   });
+  // Steady: nobody carried, falling or reacting; walks and busy pets step at 8 fps.
+  // Calm: on top of that nobody walks, and every pet dozes or waits for review.
+  const steady = !lifted && motion.state !== 'fall' && motion.state !== 'glide'
+    && events.every(event => time - event.at >= EVENT_SECONDS[event.kind])
+    && !(action && time - action.at < ACTION_SECONDS) && time - droppedAt >= 0.5 && time - landedAt >= 0.35;
+  const calm = steady && motion.state !== 'walk'
+    && pets.every(pet => paused || pet.mood === 'resting' || pet.mood === 'waiting' || pet.mood === 'review');
+  const wanted = calm ? CALM_FPS : steady ? STEADY_FPS : LIVELY_FPS;
+  useEffect(() => { if (fps !== wanted) setFps(wanted); }, [fps, wanted]);
   const accent = accentOnDark(preferences.accent);
   const terminal = preferences.pet_look === 'terminal';
   const looks = looksFor(all.map(pet => pet.name));
@@ -337,7 +360,7 @@ export function PetApp() {
   return <main className="pet-stage" style={{ width }} onMouseMove={onMove} onMouseUp={() => { pressed.current = null; }}
     onMouseLeave={() => { setHover(null); pressed.current = null; }}
     onContextMenu={event => { event.preventDefault(); pressed.current = null; void petMenu().catch(() => {}); }}>
-    {hoveredPet && !lifted && motion.state !== 'fall' && <div className="pet-bubble" style={{ top: 4 + Math.min(Math.max(screenTop() - window.screenY, 0), 56), left: bubbleLeft, maxWidth: bubbleWidth }}>
+    {hoveredPet && !lifted && motion.state !== 'fall' && <div className="pet-bubble" style={{ top: 4 + Math.min(Math.max(screenTop() - window.screenY, 0), 56), left: `min(${bubbleLeft}px, max(4px, calc(100% - ${bubbleWidth + 4}px)))` }}>
       <strong>{moodText(hoveredPet, paused)}</strong>
       {hoveredPet.title && <span>{hoveredPet.title}</span>}
     </div>}

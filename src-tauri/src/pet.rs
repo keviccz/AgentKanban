@@ -33,6 +33,10 @@ const SNAP: f64 = 64.0;
 /// Feet overlap the edge they stand on, so pets stand on the board or the taskbar.
 const OVERLAP: f64 = 6.0;
 const TICK: Duration = Duration::from_millis(33);
+/// With nothing in flight the loop only watches deadlines and drags: a slower beat will do.
+const CALM_TICK: Duration = Duration::from_millis(120);
+/// One pet pixel in logical px (U in src/pet/Pet.tsx).
+const PIXEL: f64 = 3.0;
 /// Logical px per second while wandering, and px/s² while falling.
 const WALK_SPEED: f64 = 32.0;
 const GRAVITY: f64 = 2400.0;
@@ -399,7 +403,11 @@ fn open_window(
         (label, s.config.on_top)
     })
     .ok_or("桌宠状态不可用")?;
-    let built = tauri::WebviewWindowBuilder::new(app, &label, WebviewUrl::default())
+    let mut builder = tauri::WebviewWindowBuilder::new(app, &label, WebviewUrl::default());
+    if let Some(args) = &app.config().app.windows[0].additional_browser_args {
+        builder = builder.additional_browser_args(args);
+    }
+    let built = builder
         .title("AgentKanban Agents")
         .inner_size(width, HEIGHT)
         .decorations(false)
@@ -412,7 +420,7 @@ fn open_window(
         .skip_taskbar(true)
         .focused(false)
         .visible(false)
-        // One WebView2 environment per process: share the board's data folder.
+        // One WebView2 environment per process: share the board's data folder and args.
         .data_directory(Database::default_data_dir().map_err(error)?.join("webview"))
         .build();
     let window = match built {
@@ -584,7 +592,19 @@ fn start_glide(app: &AppHandle, label: &str, then: Then) {
     });
 }
 
-/// One animation step; returns whether the window moved.
+/// Where the window is drawn: walks advance in whole pet pixels (3 logical px), which
+/// suits the pixel art and moves the window a third as often; everything else is smooth.
+fn drawn(w: &Win) -> (i32, i32) {
+    let x = if matches!(w.motion, Motion::Walk { .. }) {
+        let grid = PIXEL * w.scale;
+        w.area.left + ((w.pos.0 - w.area.left) / grid).round() * grid
+    } else {
+        w.pos.0
+    };
+    (x.round() as i32, w.pos.1.round() as i32)
+}
+
+/// One animation step; returns whether the drawn position changed.
 fn step(
     w: &mut Win,
     now: Instant,
@@ -592,7 +612,7 @@ fn step(
     gravity: bool,
     random: &mut impl FnMut() -> f64,
 ) -> bool {
-    let before = w.pos;
+    let before = drawn(w);
     match w.motion {
         Motion::Still => {}
         Motion::Hold { until } => {
@@ -663,7 +683,7 @@ fn step(
             }
         }
     }
-    w.pos != before
+    drawn(w) != before
 }
 
 #[cfg(windows)]
@@ -690,8 +710,9 @@ pub(crate) fn spawn(app: AppHandle) {
     app.on_menu_event(|app, event| menu_clicked(app, event.id.as_ref()));
     std::thread::spawn(move || {
         let mut last = Instant::now();
+        let mut tick = TICK;
         loop {
-            std::thread::sleep(TICK);
+            std::thread::sleep(tick);
             let now = Instant::now();
             let dt = now.duration_since(last).as_secs_f64().min(0.1);
             last = now;
@@ -750,7 +771,7 @@ pub(crate) fn spawn(app: AppHandle) {
                         (moved || changed).then(|| {
                             (
                                 w.label.clone(),
-                                moved.then(|| (w.pos.0.round() as i32, w.pos.1.round() as i32)),
+                                moved.then(|| drawn(w)),
                                 changed.then_some(shown),
                             )
                         })
@@ -760,6 +781,18 @@ pub(crate) fn spawn(app: AppHandle) {
                 out
             })
             .unwrap_or_default();
+            let busy = with(&app, |s| {
+                s.wins.iter().any(|w| {
+                    !w.ready
+                        || w.drag.is_some()
+                        || matches!(
+                            w.motion,
+                            Motion::Fall { .. } | Motion::Walk { .. } | Motion::Glide { .. }
+                        )
+                })
+            })
+            .unwrap_or(false);
+            tick = if busy { TICK } else { CALM_TICK };
             for (label, at, shown) in moves {
                 if let (Some((x, y)), Some(window)) = (at, app.get_webview_window(&label)) {
                     let _ = window.set_position(PhysicalPosition::new(x, y));
@@ -1008,6 +1041,27 @@ pub(crate) fn pet_layout(
     });
     follow(&app);
     save(&app)
+}
+
+/// Restore the fixed logical canvas after a monitor's DPI changes.
+pub(crate) fn scale_changed(window: &tauri::Window) {
+    let app = window.app_handle().clone();
+    let label = window.label().to_string();
+    // Queue after the DPI event: the platform applies its suggested size after
+    // invoking this callback, and can preserve an outdated physical size.
+    std::thread::spawn(move || {
+        let Some(window) = app.get_webview_window(&label) else {
+            return;
+        };
+        let Ok(scale) = window.scale_factor() else {
+            return;
+        };
+        let width = with(&app, |s| s.win(&label).map(|w| w.width)).flatten();
+        if let Some(width) = width {
+            let _ =
+                window.set_size(tauri::LogicalSize::new(width, HEIGHT).to_physical::<u32>(scale));
+        }
+    });
 }
 
 /// The merged window asks for a width that fits its pets.
